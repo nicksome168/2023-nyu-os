@@ -1,4 +1,5 @@
 # HW1
+Nick Chao | yc6371
 ## q1
 (1) Can you explain what’s happening here?
 Alice assigned the address of a local variable to a returned pointer. Local variable only lives within its function scope, so once the function finishes executing the local variable is freed. Thus, the memeory the returned pointer is pointing to no longer holds the value.
@@ -24,8 +25,7 @@ int main()
 ```
 
 ## q2
-Can you explain to Bob what each command does? What would happen if Bob executes these commands in order?
--
+### Can you explain to Bob what each command does? What would happen if Bob executes these commands in order?
 1. take 'echo cat' as the input of `cat` command
 2. write 'echo cat' to a file called 'cat'
 3. append 'echo cat' to the `cat` file
@@ -40,18 +40,15 @@ Can you explain to Bob what each command does? What would happen if Bob executes
 ```
 
 ## q3
-What is the difference between kernel and user mode? Explain how having two distinct modes aids in designing an operating system.
--
+### What is the difference between kernel and user mode? Explain how having two distinct modes aids in designing an operating system.
 Previledged instructions can only be executed under kernal mode not under user mode. The purpose is to protect operating systems from errent users.
 (ref: Operating System Concepts-Wiley, 1.4 Operating-System Operations 25)
 
 ## q4
-What is a trap instruction? Explain its use in operating systems.
--
+### What is a trap instruction? Explain its use in operating systems.
 When users make system calls, the calls will issue a trap instruction to OS to switch from user mode to kernal mode.
 (ref: Operating System Concepts-Wiley, 1.4 Operating-System Operations 25)
 
 ## q5
-Instructions related to accessing I/O devices are typically privileged instructions, that is, they can be executed in kernel mode but not in user mode. Give a reason why these instructions are privileged.
--
+### Instructions related to accessing I/O devices are typically privileged instructions, that is, they can be executed in kernel mode but not in user mode. Give a reason why these instructions are privileged.
 Because without having I/O devices being priviledged, errent users might access and modify the part of these devices they shouldn't have had access to, causing systems breakdown or crashes.
