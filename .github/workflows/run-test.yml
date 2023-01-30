@@ -1,0 +1,26 @@
+name: Run test on C
+on: 
+  push:
+    branches:
+      - master
+  pull-request:
+    branches:
+      - master
+    paths-ignore:
+      - 'README.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ytang/os
+  
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: build
+        run: make
+
+      - name: test
+        run: ./nyuc Hello, world 
