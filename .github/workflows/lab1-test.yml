@@ -1,0 +1,30 @@
+name: C/C++ CI
+
+on:
+  push:
+    paths:
+      - 'lab1-nyuc/**'
+  pull_request:
+    paths:
+      - 'lab1-nyuc/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ytang/os
+    defaults:
+      run:
+        working-directory: ./lab1-nyuc
+   
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: compile make
+      run: |
+        make
+    
+    - name: test
+      run: |
+        ./nyuc Hello, world
