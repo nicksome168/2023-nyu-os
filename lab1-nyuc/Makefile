@@ -13,3 +13,7 @@ argmanip.o: argmanip.c argmanip.h
 .PHONY: clean
 clean:
 	rm -f *.o nyuc
+
+.PHONY: test
+test:
+	python3 test.py test.txt
