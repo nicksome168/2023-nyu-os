@@ -57,3 +57,7 @@ dkms.conf
 
 # file
 *.pdf
+.DS_Store
+
+# python
+__pycache__/
