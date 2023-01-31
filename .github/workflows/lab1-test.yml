@@ -27,4 +27,4 @@ jobs:
     
     - name: test
       run: |
-        ./nyuc Hello, world
+        make test
