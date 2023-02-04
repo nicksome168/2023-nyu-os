@@ -52,12 +52,12 @@ int main()
             else if (pid == 0)
             {
                 // determin which command it is
-                char *slash_pos = strrchr(cmd_buffer, '/'); // strrchr(target,key): find the first key and return the pointer or NULL
+                char *slash_pos = strchr(cmd_buffer, '/'); // strrchr(target,key): find the first key and return the pointer or NULL
                 char *argv[] = {NULL};
                 char *path = (char *)malloc(PATH_MAX * sizeof(char));
                 if (slash_pos == cmd_buffer)
                 {
-                    //  absolute path
+                    //  absolute path: e.g., /usr/bin/ls
                     strcat(path, cmd_buffer);
                 }
                 else if (slash_pos != NULL && slash_pos != cmd_buffer)
@@ -71,11 +71,13 @@ int main()
                     // only with base name
                     strcat(path, "/usr/bin/");
                     strcat(path, cmd_buffer);
-                    fflush(stdout);
                 }
                 printf("full command: %s\n", path);
+                fflush(stdout);
                 execv(path, argv);
                 fprintf(stderr, "Error: invalid program\n");
+                free(path);
+                free(slash_pos);
             }
             else
             {
@@ -84,6 +86,7 @@ int main()
                     ;
             }
         }
+        fflush(stdout);
     }
     printf("\n");
     free(abs_path);
