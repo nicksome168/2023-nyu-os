@@ -5,12 +5,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #define PATH_MAX 1024
 #define CMD_MAX 4096
 int RUN = 1;
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
 // how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-characters-from-a-line-of-input-instead-of-a
+// how to copy chars: https://stackoverflow.com/questions/6205195/given-a-starting-and-ending-indices-how-can-i-copy-part-of-a-string-in-c
+// include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
+// How to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
+// How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
 void get_curdir(char *abs_path, char *relat_path);
 int main()
 {
@@ -23,19 +29,63 @@ int main()
     {
         getcwd(abs_path, PATH_MAX * sizeof(char));
         get_curdir(abs_path, relat_path);
+        // print prompt
         printf("[nyush %s]$ ", relat_path);
         buf_end = 0;
-        // catch ctrl+d and free the memory
+        // read the command
         while ((c = getchar()) != EOF && c != '\n' && buf_end < CMD_MAX - 1)
         {
             // get a line of input
             cmd_buffer[buf_end] = c;
             buf_end++;
         }
-        cmd_buffer[buf_end] = '\0';
-        printf("%s\n", cmd_buffer);
-        fflush(stdout);
+        if (c != EOF)
+        {
+            cmd_buffer[buf_end] = '\0';
+            int pid = fork();
+            if (pid < 0)
+            {
+                // fork failed (this shouldn't happen)
+                fprintf(stderr, "Error: fork failed\n");
+                exit(1);
+            }
+            else if (pid == 0)
+            {
+                // determin which command it is
+                char *slash_pos = strrchr(cmd_buffer, '/'); // strrchr(target,key): find the first key and return the pointer or NULL
+                char *argv[] = {NULL};
+                char *path = (char *)malloc(PATH_MAX * sizeof(char));
+                if (slash_pos == cmd_buffer)
+                {
+                    //  absolute path
+                    strcat(path, cmd_buffer);
+                }
+                else if (slash_pos != NULL && slash_pos != cmd_buffer)
+                {
+                    // relative path
+                    strcat(path, "./");
+                    strcat(path, cmd_buffer);
+                }
+                else
+                {
+                    // only with base name
+                    strcat(path, "/usr/bin/");
+                    strcat(path, cmd_buffer);
+                    fflush(stdout);
+                }
+                printf("full command: %s\n", path);
+                execv(path, argv);
+                fprintf(stderr, "Error: invalid program\n");
+            }
+            else
+            {
+                // parent waits for the children process
+                while (waitpid(-1, NULL, 0) > 0)
+                    ;
+            }
+        }
     }
+    printf("\n");
     free(abs_path);
     free(relat_path);
     free(cmd_buffer);
