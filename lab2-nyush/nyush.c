@@ -16,7 +16,12 @@
 // How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
 // How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
 
+size_t PATH_MAX = 1024;
+size_t CMD_BUFF_MAX = 1000;
+
 void get_curdir(char *abs_path, char *relat_path);
+int my_system(char *command);
+
 int main()
 {
     size_t PATH_MAX = 1024;
@@ -116,4 +121,42 @@ void get_curdir(char *abs_path, char *relat_path)
             }
         }
     }
+}
+
+int my_system(char *command)
+{
+    int pid = fork();
+    if (pid < 0)
+    {
+        // fork failed (this shouldn't happen)
+        fprintf(stderr, "Error: fork failed\n");
+        exit(1);
+    }
+    else if (pid == 0)
+    {
+        char *slash_pos = strchr(command, '/');                    // strrchr(target,key): find the first key and return the pointer or NULL
+        char *prog_path = (char *)malloc(PATH_MAX * sizeof(char)); // construct program's full path
+        char *arg = strtok(command, " ");                          // split command by space
+        // only with base name
+        if (slash_pos == NULL)
+            strcat(prog_path, "/usr/bin/");
+        strcat(prog_path, arg);
+        char *argv[1000] = {prog_path}; //{prog_path, prog_name, arg1, arg2, ..., NULL}
+        int argc = 1;
+        while (arg) // add arg to argv
+        {
+            arg = strtok(NULL, " ");
+            argv[argc] = arg;
+            argc++;
+        };
+        // for (int i = 0; argv[i] != NULL; i++)
+        //     printf("argv %d: %s\n", i, argv[i]);
+        execv(argv[0], argv);
+        fprintf(stderr, "Error: invalid program");
+        fflush(stdout);
+        exit(1);
+    }
+    // parent waits for the children process
+    wait(NULL);
+    return 0;
 }
