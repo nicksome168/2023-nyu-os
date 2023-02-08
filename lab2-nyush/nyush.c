@@ -21,20 +21,22 @@ size_t CMD_BUFF_MAX = 1000;
 
 void get_curdir(char *abs_path, char *relat_path);
 int my_system(char *command);
+void handler(int sig);
 
 int main()
 {
-    size_t PATH_MAX = 1024;
-    size_t CMD_BUFF_MAX = 1000;
     int characters = 0;
     char *abs_path = (char *)malloc(PATH_MAX * sizeof(char));
     char *relat_path = (char *)malloc(PATH_MAX * sizeof(char));
     char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    // ignore signals
+    signal(SIGINT, handler);
+    signal(SIGQUIT, handler);
+    signal(SIGTSTP, handler);
     while (1)
     {
         getcwd(abs_path, PATH_MAX * sizeof(char));
         get_curdir(abs_path, relat_path);
-
         // print prompt
         printf("[nyush %s]$ ", relat_path);
         fflush(stdout);
@@ -50,51 +52,7 @@ int main()
         }
         else
         {
-            int pid = fork();
-            if (pid < 0)
-            {
-                // fork failed (this shouldn't happen)
-                fprintf(stderr, "Error: fork failed\n");
-                exit(1);
-            }
-            else if (pid == 0)
-            {
-                // determin which command it is
-                char *slash_pos = strchr(cmd_buffer, '/'); // strrchr(target,key): find the first key and return the pointer or NULL
-                char *prog_path = (char *)malloc(PATH_MAX * sizeof(char));
-                char *arg = strtok(cmd_buffer, " ");
-                if (slash_pos == NULL)
-                {
-                    // only with base name
-                    strcat(prog_path, "/usr/bin/");
-                    strcat(prog_path, arg);
-                }
-                else
-                {
-                    // relative path dir1/prog or absolute path: e.g., /usr/bin/ls
-                    strcat(prog_path, arg);
-                }
-                char *argv[1000] = {prog_path}; //{prog_path, prog_name, arg1, arg2, ..., NULL}
-                int argc = 1;
-                // add arg to argv
-                while (arg)
-                {
-                    arg = strtok(NULL, " ");
-                    argv[argc] = arg;
-                    argc++;
-                }
-                // for (int i = 0; argv[i] != NULL; i++)
-                //     printf("argv %d: %s\n", i, argv[i]);
-                execv(argv[0], argv);
-                fprintf(stderr, "Error: invalid program\n");
-                fflush(stdout);
-                exit(1);
-            }
-            else
-            {
-                // parent waits for the children process
-                wait(NULL);
-            }
+            my_system(cmd_buffer);
         }
     }
     free(abs_path);
@@ -121,6 +79,11 @@ void get_curdir(char *abs_path, char *relat_path)
             }
         }
     }
+}
+
+void handler(int sig)
+{
+    signal(sig, handler);
 }
 
 int my_system(char *command)
