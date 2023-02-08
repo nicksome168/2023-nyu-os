@@ -8,40 +8,45 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#define PATH_MAX 1024
-#define CMD_MAX 4096
-int RUN = 1;
+// how to use getline: https://c-for-dummies.com/blog/?p=1112s
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
 // how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-characters-from-a-line-of-input-instead-of-a
 // how to copy chars: https://stackoverflow.com/questions/6205195/given-a-starting-and-ending-indices-how-can-i-copy-part-of-a-string-in-c
 // include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
 // How to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
 // How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
+// How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
+
 void get_curdir(char *abs_path, char *relat_path);
 int main()
 {
-    int c = 0;
-    int buf_end = 0;
+    size_t PATH_MAX = 1024;
+    size_t CMD_BUFF_MAX = 1000;
+    size_t characters = 0;
     char *abs_path = (char *)malloc(PATH_MAX * sizeof(char));
     char *relat_path = (char *)malloc(PATH_MAX * sizeof(char));
-    char *cmd_buffer = (char *)malloc(CMD_MAX * sizeof(char));
-    while (c != EOF)
+    char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    while (1)
     {
         getcwd(abs_path, PATH_MAX * sizeof(char));
         get_curdir(abs_path, relat_path);
+
         // print prompt
         printf("[nyush %s]$ ", relat_path);
-        buf_end = 0;
-        // read the command
-        while ((c = getchar()) != EOF && c != '\n' && buf_end < CMD_MAX - 1)
+        fflush(stdout);
+        characters = getline(&cmd_buffer, &CMD_BUFF_MAX, stdin);
+        cmd_buffer[characters - 1] = '\0'; // remote newline
+
+        if (strcmp(cmd_buffer, "exit") == 0)
         {
-            // get a line of input
-            cmd_buffer[buf_end] = c;
-            buf_end++;
+            break;
         }
-        if (c != EOF)
+        else if (characters == 1)
         {
-            cmd_buffer[buf_end] = '\0';
+            continue;
+        }
+        else
+        {
             int pid = fork();
             if (pid < 0)
             {
@@ -53,42 +58,42 @@ int main()
             {
                 // determin which command it is
                 char *slash_pos = strchr(cmd_buffer, '/'); // strrchr(target,key): find the first key and return the pointer or NULL
-                char *argv[] = {NULL};
-                char *path = (char *)malloc(PATH_MAX * sizeof(char));
-                if (slash_pos == cmd_buffer)
+                char *prog_path = (char *)malloc(PATH_MAX * sizeof(char));
+                char *arg = strtok(cmd_buffer, " ");
+                if (slash_pos == NULL)
                 {
-                    //  absolute path: e.g., /usr/bin/ls
-                    strcat(path, cmd_buffer);
-                }
-                else if (slash_pos != NULL && slash_pos != cmd_buffer)
-                {
-                    // relative path
-                    strcat(path, "./");
-                    strcat(path, cmd_buffer);
+                    // only with base name
+                    strcat(prog_path, "/usr/bin/");
+                    strcat(prog_path, arg);
                 }
                 else
                 {
-                    // only with base name
-                    strcat(path, "/usr/bin/");
-                    strcat(path, cmd_buffer);
+                    // relative path or absolute path: e.g., /usr/bin/ls
+                    strcat(prog_path, arg);
                 }
-                printf("full command: %s\n", path);
-                fflush(stdout);
-                execv(path, argv);
+                char *argv[] = {prog_path}; //{prog_path, prog_name, arg1, arg2, ..., NULL}
+                int argc = 1;
+                // add arg to argv
+                while ((arg = strtok(NULL, " ")))
+                {
+                    argv[argc] = arg;
+                    argc++;
+                }
+                argv[argc] = NULL;
+                // for (int i = 0; argv[i] != NULL; i++)
+                //     printf("argv %d: %s\n", i, argv[i]);
+                execvp(argv[0], argv);
                 fprintf(stderr, "Error: invalid program\n");
-                free(path);
-                free(slash_pos);
+                fflush(stdout);
+                exit(1);
             }
             else
             {
                 // parent waits for the children process
-                while (waitpid(-1, NULL, 0) > 0)
-                    ;
+                wait(NULL);
             }
         }
-        fflush(stdout);
     }
-    printf("\n");
     free(abs_path);
     free(relat_path);
     free(cmd_buffer);
