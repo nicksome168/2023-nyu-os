@@ -22,7 +22,7 @@ int main()
 {
     size_t PATH_MAX = 1024;
     size_t CMD_BUFF_MAX = 1000;
-    size_t characters = 0;
+    int characters = 0;
     char *abs_path = (char *)malloc(PATH_MAX * sizeof(char));
     char *relat_path = (char *)malloc(PATH_MAX * sizeof(char));
     char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
@@ -35,9 +35,8 @@ int main()
         printf("[nyush %s]$ ", relat_path);
         fflush(stdout);
         characters = getline(&cmd_buffer, &CMD_BUFF_MAX, stdin);
-        cmd_buffer[characters - 1] = '\0'; // remote newline
-
-        if (strcmp(cmd_buffer, "exit") == 0)
+        cmd_buffer[characters - 1] = '\0';                       // remote newline
+        if (strcmp(cmd_buffer, "exit") == 0 || characters == -1) // ctrl+d
         {
             break;
         }
