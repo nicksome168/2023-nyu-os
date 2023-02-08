@@ -8,7 +8,7 @@ nyush: nyush.o cmdreader.o
 
 nyush.o: nyush.c
 
-cmdreader.o: cmdReader.c cmdReader.h
+cmdreader.o: cmdreader.c cmdreader.h
 
 .PHONY: clean
 clean:
@@ -16,4 +16,10 @@ clean:
 
 .PHONY: test
 test:
-	python3 test.py test.txt
+	tar xf nyush-autograder.tar.xz
+	zip nyush.zip Makefile *.h *.c
+	cp nyush.zip nyush-autograder
+
+.PHONY: zip
+zip:
+	zip nyush.zip Makefile *.h *.c
