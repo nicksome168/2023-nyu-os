@@ -2,7 +2,6 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -67,21 +66,21 @@ int main()
                 }
                 else
                 {
-                    // relative path or absolute path: e.g., /usr/bin/ls
+                    // relative path dir1/prog or absolute path: e.g., /usr/bin/ls
                     strcat(prog_path, arg);
                 }
-                char *argv[] = {prog_path}; //{prog_path, prog_name, arg1, arg2, ..., NULL}
+                char *argv[1000] = {prog_path}; //{prog_path, prog_name, arg1, arg2, ..., NULL}
                 int argc = 1;
                 // add arg to argv
-                while ((arg = strtok(NULL, " ")))
+                while (arg)
                 {
+                    arg = strtok(NULL, " ");
                     argv[argc] = arg;
                     argc++;
                 }
-                argv[argc] = NULL;
                 // for (int i = 0; argv[i] != NULL; i++)
                 //     printf("argv %d: %s\n", i, argv[i]);
-                execvp(argv[0], argv);
+                execv(argv[0], argv);
                 fprintf(stderr, "Error: invalid program\n");
                 fflush(stdout);
                 exit(1);
