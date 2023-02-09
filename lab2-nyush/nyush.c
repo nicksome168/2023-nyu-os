@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 // how to use getline: https://c-for-dummies.com/blog/?p=1112s
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
@@ -16,7 +17,6 @@
 // How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
 // How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
 
-size_t PATH_MAX = 1024;
 size_t CMD_BUFF_MAX = 1000;
 
 void get_curdir(char *abs_path, char *relat_path);
@@ -26,27 +26,27 @@ void handler(int sig);
 int main()
 {
     int characters = 0;
-    char *abs_path = (char *)malloc(PATH_MAX * sizeof(char));
-    char *relat_path = (char *)malloc(PATH_MAX * sizeof(char));
+    char *abs_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    char *relat_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
     char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-    // ignore signals
+    // ignore certain signals
     signal(SIGINT, handler);
     signal(SIGQUIT, handler);
     signal(SIGTSTP, handler);
     while (1)
     {
-        getcwd(abs_path, PATH_MAX * sizeof(char));
+        getcwd(abs_path, CMD_BUFF_MAX * sizeof(char));
         get_curdir(abs_path, relat_path);
         // print prompt
         printf("[nyush %s]$ ", relat_path);
         fflush(stdout);
         characters = getline(&cmd_buffer, &CMD_BUFF_MAX, stdin);
-        cmd_buffer[characters - 1] = '\0';                       // remote newline
+        cmd_buffer[characters - 1] = '\0';                       // remove newline
         if (strcmp(cmd_buffer, "exit") == 0 || characters == -1) // ctrl+d
         {
             break;
         }
-        else if (characters == 1)
+        else if (characters == 1) // enter
         {
             continue;
         }
@@ -88,6 +88,27 @@ void handler(int sig)
 
 int my_system(char *command)
 {
+    // change directory
+    if (strstr(command, "cd"))
+    {
+        char *path = strtok(command, " "); // cd
+        path = strtok(NULL, " ");
+        if (path == NULL || strtok(NULL, " ") != NULL)
+        {
+            fprintf(stderr, "Error: invalid command\n");
+            fflush(stdout);
+        }
+        else
+        {
+            if (chdir(path) < 0)
+            {
+                fprintf(stderr, "Error: invalid directory\n");
+                fflush(stdout);
+            }
+        }
+        return 0;
+    }
+    // other commands
     int pid = fork();
     if (pid < 0)
     {
@@ -97,9 +118,9 @@ int my_system(char *command)
     }
     else if (pid == 0)
     {
-        char *slash_pos = strchr(command, '/');                    // strrchr(target,key): find the first key and return the pointer or NULL
-        char *prog_path = (char *)malloc(PATH_MAX * sizeof(char)); // construct program's full path
-        char *arg = strtok(command, " ");                          // split command by space
+        char *slash_pos = strchr(command, '/');                        // strrchr(target,key): find the first key and return the pointer or NULL
+        char *prog_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char)); // construct program's full path
+        char *arg = strtok(command, " ");                              // split command by space
         // only with base name
         if (slash_pos == NULL)
             strcat(prog_path, "/usr/bin/");
@@ -115,7 +136,7 @@ int my_system(char *command)
         // for (int i = 0; argv[i] != NULL; i++)
         //     printf("argv %d: %s\n", i, argv[i]);
         execv(argv[0], argv);
-        fprintf(stderr, "Error: invalid program");
+        fprintf(stderr, "Error: invalid program\n");
         fflush(stdout);
         exit(1);
     }
