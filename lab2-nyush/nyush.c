@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <signal.h>
 
 // how to use getline: https://c-for-dummies.com/blog/?p=1112s
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
@@ -16,12 +17,13 @@
 // How to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
 // How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
 // How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
+// How to ignore signal in parent but not in child process: https://stackoverflow.com/questions/74522774/how-a-parent-process-can-ignore-sigint-and-child-process-doesnt
+// How to return to parent after child process stop: https://stackoverflow.com/questions/39962707/wait-does-not-return-after-child-received-sigstop
 
 size_t CMD_BUFF_MAX = 1000;
 
 void get_curdir(char *abs_path, char *relat_path);
 int my_system(char *command);
-void handler(int sig);
 
 int main()
 {
@@ -30,9 +32,8 @@ int main()
     char *relat_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
     char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
     // ignore certain signals
-    signal(SIGINT, handler);
-    signal(SIGQUIT, handler);
-    signal(SIGTSTP, handler);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
     while (1)
     {
         getcwd(abs_path, CMD_BUFF_MAX * sizeof(char));
@@ -79,11 +80,6 @@ void get_curdir(char *abs_path, char *relat_path)
             }
         }
     }
-}
-
-void handler(int sig)
-{
-    signal(sig, handler);
 }
 
 int my_system(char *command)
@@ -135,12 +131,14 @@ int my_system(char *command)
         };
         // for (int i = 0; argv[i] != NULL; i++)
         //     printf("argv %d: %s\n", i, argv[i]);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
         execv(argv[0], argv);
         fprintf(stderr, "Error: invalid program\n");
         fflush(stdout);
         exit(1);
     }
     // parent waits for the children process
-    wait(NULL);
+    waitpid(-1, NULL, WUNTRACED);
     return 0;
 }
