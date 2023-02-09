@@ -24,6 +24,8 @@ size_t CMD_BUFF_MAX = 1000;
 
 void get_curdir(char *abs_path, char *relat_path);
 int my_system(char *command);
+int is_builtin_cmd(char *command);
+int builtin_cmd_handler(char *command);
 
 int main()
 {
@@ -42,14 +44,19 @@ int main()
         printf("[nyush %s]$ ", relat_path);
         fflush(stdout);
         characters = getline(&cmd_buffer, &CMD_BUFF_MAX, stdin);
-        cmd_buffer[characters - 1] = '\0';                       // remove newline
-        if (strcmp(cmd_buffer, "exit") == 0 || characters == -1) // ctrl+d
+        cmd_buffer[characters - 1] = '\0'; // remove newline
+        if (characters == -1)              // ctrl+d
         {
             break;
         }
         else if (characters == 1) // enter
         {
             continue;
+        }
+        else if (is_builtin_cmd(cmd_buffer))
+        {
+            if (builtin_cmd_handler(cmd_buffer) == -1)
+                break;
         }
         else
         {
@@ -82,29 +89,60 @@ void get_curdir(char *abs_path, char *relat_path)
     }
 }
 
-int my_system(char *command)
+int is_builtin_cmd(char *command)
 {
-    // change directory
-    if (strstr(command, "cd"))
+    if (strstr(command, "cd") || strstr(command, "jobs") || strstr(command, "fg") || strstr(command, "exit"))
+        return 1;
+    return 0;
+}
+
+int builtin_cmd_handler(char *command)
+{
+    strtok(command, " ");          // cmd itself
+    char *arg = strtok(NULL, " "); // first arg
+    if (strstr(command, "jobs") || strstr(command, "exit"))
     {
-        char *path = strtok(command, " "); // cd
-        path = strtok(NULL, " ");
-        if (path == NULL || strtok(NULL, " ") != NULL)
+        // should take no argument
+        if (arg != NULL)
         {
             fprintf(stderr, "Error: invalid command\n");
             fflush(stdout);
+            return 0;
+        }
+        if (strstr(command, "exit"))
+        {
+            return -1;
         }
         else
         {
-            if (chdir(path) < 0)
+        }
+    }
+    else if (strstr(command, "cd") || strstr(command, "fg"))
+    {
+        // should not take 0 or 2+ arguments
+        if (arg == NULL || strtok(NULL, " ") != NULL)
+        {
+            fprintf(stderr, "Error: invalid command\n");
+            fflush(stdout);
+            return 0;
+        }
+        if (strstr(command, "cd"))
+        {
+            if (chdir(arg) < 0)
             {
                 fprintf(stderr, "Error: invalid directory\n");
                 fflush(stdout);
             }
         }
-        return 0;
+        else
+        {
+        }
     }
-    // other commands
+    return 0;
+}
+
+int my_system(char *command)
+{
     int pid = fork();
     if (pid < 0)
     {
