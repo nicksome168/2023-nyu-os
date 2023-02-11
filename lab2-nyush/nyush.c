@@ -167,8 +167,10 @@ void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
         }
         else // input
         {
-            // printf("wrote input to %s\n", file);
+            //  printf("wrote input to %s\n", file);
             fd = open(file, O_RDONLY);
+            if (fd < 0) // check if file exists
+                invalid_cmd("Error: invalid file\n");
             dup2(fd, 0);
         }
         close(fd);
