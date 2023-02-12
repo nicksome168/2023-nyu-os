@@ -14,13 +14,15 @@
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
 // how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-characters-from-a-line-of-input-instead-of-a
 // how to copy chars: https://stackoverflow.com/questions/6205195/given-a-starting-and-ending-indices-how-can-i-copy-part-of-a-string-in-c
-// include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
+// how to include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
 // How to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
 // How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
 // How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
 // How to ignore signal in parent but not in child process: https://stackoverflow.com/questions/74522774/how-a-parent-process-can-ignore-sigint-and-child-process-doesnt
 // How to return to parent after child process stop: https://stackoverflow.com/questions/39962707/wait-does-not-return-after-child-received-sigstop
 // How to redirect i/o: https://stackoverflow.com/questions/19846272/redirecting-i-o-implementation-of-a-shell-in-c
+// how to create multiple child processes: https://stackoverflow.com/questions/876605/multiple-child-process
+
 size_t CMD_BUFF_MAX = 1000;
 
 void get_curdir(char *abs_path, char *relat_path);
@@ -29,7 +31,10 @@ int is_builtin_cmd(char *command);
 int builtin_cmd_handler(char *command);
 void invalid_cmd(char *err_msg);
 void _io_redir_handler(char **argv, int arrow_pos, int io_flag);
-int _parse_command_line(char *command, char **argv);
+void _redir_io(char **argv);
+void _add_path(char **subarg);
+void _split_cmd(char **cmdv, char ***cmdvv);
+int _split_pipe(char *command, char **cmdv);
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -151,6 +156,121 @@ int builtin_cmd_handler(char *command)
     return 0;
 }
 
+void _add_path(char **subarg)
+{
+    char *prog = subarg[0];
+    char *slash_pos = strchr(prog, '/');                               // strrchr(target,key): find the first key and return the pointer or NULL
+    char *prog_fullpath = (char *)malloc(CMD_BUFF_MAX * sizeof(char)); // construct program's full path
+    if (slash_pos == NULL)                                             // only with base name
+    {
+        strcpy(prog_fullpath, "/usr/bin/");
+    }
+    strcat(prog_fullpath, prog);
+    subarg[0] = prog_fullpath;
+}
+
+char **_copy_cmd(int subargc, char **argv)
+{
+    /*
+    return a copy of the command line arguments
+    */
+    char **subargv = malloc(sizeof(char *) * (subargc + 1)); // +1 to add a null to signal the end
+    for (int count = 0; count < subargc; count++)
+    {
+        const int arglen = strlen(argv[count]);
+        char *arg = (char *)malloc(arglen + 1); // +1 for the \0
+        strcpy(arg, argv[count]);
+        subargv[count] = arg;
+    }
+    subargv[subargc] = NULL;
+    return subargv;
+}
+
+int _split_pipe(char *command, char **cmdv)
+{
+    // input: {"cmd1", "arg1" ,"|", "cmd2", "arg2", "|", "cmd3", "arg3", "|" ...
+    // output: { {"cmd1", "arg1"}, {"cmd2", "arg2"}, {"cmd3", "arg3"}, ..., NULL}
+    int subcmd = 0;
+    // char *last;
+    if (strstr(command, "|"))
+    {
+        char *cmd = strtok(command, "|"); // split by |
+        while (cmd)
+        {
+            cmdv[subcmd] = cmd; //{prog_path, prog_name, arg1, arg2, ..., NULL}
+            subcmd++;
+            cmd = strtok(NULL, "|");
+        };
+    }
+    else
+    {
+        cmdv[subcmd] = command;
+        subcmd++;
+    }
+    cmdv[subcmd] = NULL;
+    return subcmd;
+}
+
+void _split_cmd(char **cmdv, char ***cmdvv)
+{
+    /*
+    input: cmdv: {"ls -l","cat"...NULL}
+    output: cmdvv: { {"ls", "-l"}, {"cat"},...NULL}
+    */
+    char **subcmdv;
+    char *subcmd;
+    for (int i = 0; cmdv[i]; i++)
+    {
+        int subcmdc = 0;
+        // assume a cmd has no more than 10 arg
+        subcmdv = malloc(sizeof(char *) * (11));
+        if (!strstr(cmdv[i], " ")) // no args
+        {
+            subcmdv[subcmdc] = cmdv[i];
+            subcmdc++;
+        }
+        else
+        {
+            // has args
+            subcmd = strtok(cmdv[i], " ");
+            while (subcmd)
+            {
+                subcmdv[subcmdc] = subcmd;
+                subcmdc++;
+                subcmd = strtok(NULL, " ");
+            }
+        }
+        cmdvv[i] = subcmdv;
+    }
+}
+
+void _redir_io(char **argv)
+{
+    int in_redirect = 0;
+    int out_redirect = 0;
+    int i = 0;
+    while (argv[i] != NULL)
+    {
+        if (strstr(argv[i], "<"))
+            in_redirect = i;
+        else if (strstr(argv[i], ">") || strstr(argv[i], ">>"))
+            out_redirect = i;
+        i++;
+    };
+    // handle input redirect
+    if (in_redirect)
+        _io_redir_handler(argv, in_redirect, 0);
+    // handle output  redirect
+    if (out_redirect)
+        _io_redir_handler(argv, out_redirect, 1);
+    if (in_redirect || out_redirect)
+    {
+        int arrow_pos = (MIN(in_redirect, out_redirect) != 0 ? MIN(in_redirect, out_redirect) : MAX(in_redirect, out_redirect));
+        // "some_cmd < ifile > ofile" can be seen as only exectuing some_cmd with its process fd changed to i/ofile
+        // ignore the input after first arrow_pos
+        argv[arrow_pos] = NULL;
+    }
+}
 void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
 {
     char *file;
@@ -182,75 +302,55 @@ void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
     }
 }
 
-int _parse_command_line(char *command, char **argv)
-{
-    char *slash_pos = strchr(command, '/');                        // strrchr(target,key): find the first key and return the pointer or NULL
-    char *prog_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char)); // construct program's full path
-    char *arg = strtok(command, " ");                              // split command by space
-    if (slash_pos == NULL)                                         // only with base name
-        strcat(prog_path, "/usr/bin/");
-    strcat(prog_path, arg);
-    int argc = 0;
-    argv[argc] = prog_path; //{prog_path, prog_name, arg1, arg2, ..., NULL}
-    argc++;
-    int in_redirect = 0;
-    int out_redirect = 0;
-    while (arg) // add arg to argv
-    {
-        arg = strtok(NULL, " ");
-        if (arg != NULL)
-        {
-            if (strstr(arg, "<"))
-                in_redirect = argc;
-            else if (strstr(arg, ">") || strstr(arg, ">>"))
-                out_redirect = argc;
-        }
-        argv[argc] = arg;
-        argc++;
-    };
-    // for (int i = 0; argv[i] != NULL; i++)
-    //     printf("argv %d: %s\n", i, argv[i]);
-    // printf("in_redirect: %d\n", in_redirect);
-    // printf("out_redirect: %d\n", out_redirect);
-    // handle input redirect
-    if (in_redirect)
-        _io_redir_handler(argv, in_redirect, 0);
-    // handle output  redirect
-    if (out_redirect)
-        _io_redir_handler(argv, out_redirect, 1);
-    if (in_redirect || out_redirect)
-        return (MIN(in_redirect, out_redirect) != 0 ? MIN(in_redirect, out_redirect) : MAX(in_redirect, out_redirect));
-    return 0;
-}
-
 int my_system(char *command)
 {
-    char *argv[100];
-    int pid = fork();
-    if (pid < 0)
+    char *cmdv[100];
+    char **cmdvv[100];
+    int childpids[100];
+    // determine num of processes and split by pipe
+    int num_p = _split_pipe(command, cmdv);
+    _split_cmd(cmdv, cmdvv);
+    // for (int i = 0; i < num_p; i++)
+    // {
+    //     printf("cmdv[%d]: %s\n", i, cmdv[i]);
+    // }
+
+    // for (int i = 0; cmdvv[i] != NULL; i++)
+    // {
+    //     printf("argvv[%d]:", i);
+    //     for (int j = 0; cmdvv[i][j] != NULL; j++)
+    //         printf("%s ", cmdvv[i][j]);
+    //     printf("\n");
+    // }
+    // printf("num_p: %d\n", num_p);
+    //  for loop create child processes
+    for (int i = 0; i < num_p; i++)
     {
-        // fork failed (this shouldn't happen)
-        invalid_cmd("Error: fork failed\n");
-        exit(1);
-    }
-    else if (pid == 0)
-    {
-        int has_io_redir = _parse_command_line(command, argv); // return 0 if no i/o redir, else return the first arrow position
-        signal(SIGINT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
-        if (has_io_redir)
+        if ((childpids[i] = fork()) < 0) // child processes
         {
-            argv[has_io_redir] = NULL;
-            execv(argv[0], argv);
+            // fork failed (this shouldn't happen)
+            invalid_cmd("Error: fork failed\n");
+            exit(1);
         }
-        else
+        else if (childpids[i] == 0) // child processes
         {
-            execv(argv[0], argv);
+            // TODO handle pipe redirection
+            char **subarg = cmdvv[i];
+            //  printf("[son] pid %d from [parent] pid %d\n", getpid(), getppid());
+            _add_path(subarg);
+            _redir_io(subarg);
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTSTP, SIG_DFL);
+            execv(subarg[0], subarg);
+            invalid_cmd("Error: invalid program\n");
+            exit(1);
         }
-        invalid_cmd("Error: invalid program\n");
-        exit(1);
     }
     // parent waits for the children process
-    waitpid(-1, NULL, WUNTRACED);
+    for (int i = 0; i < num_p; i++)
+    {
+        // printf("Process %d\n", childpids[i]);
+        waitpid(-1, NULL, WUNTRACED);
+    }
     return 0;
 }
