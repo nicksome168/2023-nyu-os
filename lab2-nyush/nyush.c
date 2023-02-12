@@ -22,6 +22,7 @@
 // How to return to parent after child process stop: https://stackoverflow.com/questions/39962707/wait-does-not-return-after-child-received-sigstop
 // How to redirect i/o: https://stackoverflow.com/questions/19846272/redirecting-i-o-implementation-of-a-shell-in-c
 // how to create multiple child processes: https://stackoverflow.com/questions/876605/multiple-child-process
+// how to implement multiple pipes: https://stackoverflow.com/questions/8389033/implementation-of-multiple-pipes-in-c
 
 size_t CMD_BUFF_MAX = 1000;
 
@@ -191,7 +192,7 @@ int _split_pipe(char *command, char **cmdv)
     // input: {"cmd1", "arg1" ,"|", "cmd2", "arg2", "|", "cmd3", "arg3", "|" ...
     // output: { {"cmd1", "arg1"}, {"cmd2", "arg2"}, {"cmd3", "arg3"}, ..., NULL}
     int subcmd = 0;
-    // char *last;
+    int num_pipes = 0;
     if (strstr(command, "|"))
     {
         char *cmd = strtok(command, "|"); // split by |
@@ -200,7 +201,15 @@ int _split_pipe(char *command, char **cmdv)
             cmdv[subcmd] = cmd; //{prog_path, prog_name, arg1, arg2, ..., NULL}
             subcmd++;
             cmd = strtok(NULL, "|");
+            if (cmd)
+                num_pipes++;
         };
+        // printf("# of cmd: %d; # of pipes: %d\n", subcmd, num_pipes);
+        if ((num_pipes == 0) | (subcmd != num_pipes + 1))
+        {
+            invalid_cmd("Error: invalid command\n");
+            return -1;
+        }
     }
     else
     {
@@ -283,6 +292,8 @@ void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
         {
             // printf("wrote output to %s\n", file);
             fd = open(file, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
+            if (fd < 0) // check if file exists
+                invalid_cmd("Error: invalid file\n");
             dup2(fd, 1);
         }
         else // input
@@ -307,8 +318,11 @@ int my_system(char *command)
     char *cmdv[100];
     char **cmdvv[100];
     int childpids[100];
+    int num_p;
     // determine num of processes and split by pipe
-    int num_p = _split_pipe(command, cmdv);
+    // return -1 if pipe command is illegal
+    if ((num_p = _split_pipe(command, cmdv)) == -1)
+        return -1;
     _split_cmd(cmdv, cmdvv);
     // for (int i = 0; i < num_p; i++)
     // {
@@ -324,6 +338,15 @@ int my_system(char *command)
     // }
     // printf("num_p: %d\n", num_p);
     //  for loop create child processes
+    int all_fildes[2 * (num_p - 1)];
+    for (int i = 0; i < num_p - 1; i++)
+    {
+        if (pipe(all_fildes + i * 2) == -1)
+        {
+            invalid_cmd("Error: creating pipe\n");
+            exit(-1);
+        }
+    }
     for (int i = 0; i < num_p; i++)
     {
         if ((childpids[i] = fork()) < 0) // child processes
@@ -334,7 +357,24 @@ int my_system(char *command)
         }
         else if (childpids[i] == 0) // child processes
         {
-            // TODO handle pipe redirection
+            // handle pipe redirection
+            if (num_p > 1)
+            {
+                // pro0 | pro1 | pro2 | pro3
+                if (i > 0) // every process execept the first has stdin redirection
+                {
+                    dup2(all_fildes[2 * (i - 1)], 0); // change stdin to pipe output
+                }
+                if (i < num_p - 1) // every process execept the last has stdout redirection
+                {
+                    dup2(all_fildes[2 * i + 1], 1); // change stdout to pipe output
+                }
+                for (int i = 0; i < num_p - 1; i++)
+                {
+                    close(all_fildes[2 * i]);
+                    close(all_fildes[2 * i + 1]);
+                }
+            }
             char **subarg = cmdvv[i];
             //  printf("[son] pid %d from [parent] pid %d\n", getpid(), getppid());
             _add_path(subarg);
@@ -347,6 +387,12 @@ int my_system(char *command)
         }
     }
     // parent waits for the children process
+    for (int i = 0; i < num_p - 1; i++)
+    {
+        // printf("pipe%d: rdes=%d and wdes=%d\n", i, all_fildes[2 * i], all_fildes[2 * i + 1]);
+        close(all_fildes[2 * i]);
+        close(all_fildes[2 * i + 1]);
+    }
     for (int i = 0; i < num_p; i++)
     {
         // printf("Process %d\n", childpids[i]);
