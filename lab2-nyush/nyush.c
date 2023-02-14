@@ -15,16 +15,39 @@
 // how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-characters-from-a-line-of-input-instead-of-a
 // how to copy chars: https://stackoverflow.com/questions/6205195/given-a-starting-and-ending-indices-how-can-i-copy-part-of-a-string-in-c
 // how to include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
-// How to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
-// How to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
-// How to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
-// How to ignore signal in parent but not in child process: https://stackoverflow.com/questions/74522774/how-a-parent-process-can-ignore-sigint-and-child-process-doesnt
-// How to return to parent after child process stop: https://stackoverflow.com/questions/39962707/wait-does-not-return-after-child-received-sigstop
-// How to redirect i/o: https://stackoverflow.com/questions/19846272/redirecting-i-o-implementation-of-a-shell-in-c
+// how to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
+// how to make parent wait for all child processes to finish?: https://stackoverflow.com/questions/19461744/how-to-make-parent-wait-for-all-child-processes-to-finish
+// how to use strtok: https://www.ibm.com/docs/en/zos/2.1.0?topic=functions-strtok-tokenize-string
+// how to ignore signal in parent but not in child process: https://stackoverflow.com/questions/74522774/how-a-parent-process-can-ignore-sigint-and-child-process-doesnt
+// how to return to parent after child process stop: https://stackoverflow.com/questions/39962707/wait-does-not-return-after-child-received-sigstop
+// how to redirect i/o: https://stackoverflow.com/questions/19846272/redirecting-i-o-implementation-of-a-shell-in-c
 // how to create multiple child processes: https://stackoverflow.com/questions/876605/multiple-child-process
 // how to implement multiple pipes: https://stackoverflow.com/questions/8389033/implementation-of-multiple-pipes-in-c
+// how to implement jobs struct: https://www.gnu.org/software/libc/manual/html_node/Data-Structures.html
+// how to initialize a struct in c: https://stackoverflow.com/questions/330793/how-to-initialize-a-struct-in-accordance-with-c-programming-language-standards
+// hwo to acessing a locally declared struct outside of its scope: https://stackoverflow.com/questions/27763407/acessing-a-locally-declared-struct-outside-of-its-scope
+
+// define process struct
+typedef struct process
+{
+    struct process *_next;
+    int _pid;
+    int _fildes[2];
+    char *_cmd;
+} process;
+
+// define jobs struct
+typedef struct jobs
+{
+    struct process *_head_proc; // the head of the list
+    struct process *_tail_proc; // the tail of the list
+} jobs;
+
+struct jobs _ALL_JOBS = {._head_proc = NULL, ._tail_proc = NULL};
+struct jobs *ALL_JOBS = &_ALL_JOBS;
 
 size_t CMD_BUFF_MAX = 1000;
+size_t ARG_MAX = 10; // assume no more than ARG_MAX arguments
 
 void get_curdir(char *abs_path, char *relat_path);
 int my_system(char *command);
@@ -75,6 +98,15 @@ int main()
         {
             my_system(cmd_buffer);
         }
+    }
+    struct process *ptr = ALL_JOBS->_head_proc;
+    struct process *nxt_ptr;
+    while (ptr)
+    {
+        free(ptr->_cmd);
+        nxt_ptr = ptr->_next;
+        free(ptr);
+        ptr = nxt_ptr;
     }
     free(abs_path);
     free(relat_path);
@@ -131,8 +163,17 @@ int builtin_cmd_handler(char *command)
         {
             return -1;
         }
-        else
+        else // jobs cmd
         {
+            // TODO handle print jobs
+            int count = 1;
+            struct process *p_ptr = ALL_JOBS->_head_proc;
+            while (p_ptr)
+            {
+                printf("[%d] %s\n", count, p_ptr->_cmd);
+                count++;
+                p_ptr = p_ptr->_next;
+            }
         }
     }
     else if (strstr(command, "cd") || strstr(command, "fg"))
@@ -150,8 +191,10 @@ int builtin_cmd_handler(char *command)
                 invalid_cmd("Error: invalid directory\n");
             }
         }
-        else
+        else // fg cmd
         {
+            // TODO put child process to foreground
+            // how to wait for child process
         }
     }
     return 0;
@@ -232,7 +275,7 @@ void _split_cmd(char **cmdv, char ***cmdvv)
     {
         int subcmdc = 0;
         // assume a cmd has no more than 10 arg
-        subcmdv = malloc(sizeof(char *) * (11));
+        subcmdv = malloc(sizeof(char *) * (ARG_MAX));
         if (!strstr(cmdv[i], " ")) // no args
         {
             subcmdv[subcmdc] = cmdv[i];
@@ -249,6 +292,7 @@ void _split_cmd(char **cmdv, char ***cmdvv)
                 subcmd = strtok(NULL, " ");
             }
         }
+        subcmdv[subcmdc] = NULL;
         cmdvv[i] = subcmdv;
     }
 }
@@ -393,10 +437,30 @@ int my_system(char *command)
         close(all_fildes[2 * i]);
         close(all_fildes[2 * i + 1]);
     }
+    int p_status;
     for (int i = 0; i < num_p; i++)
     {
         // printf("Process %d\n", childpids[i]);
-        waitpid(-1, NULL, WUNTRACED);
+        // TASK1: read the status and handle STOP child process
+        waitpid(childpids[i], &p_status, WUNTRACED);
+        if (WIFSTOPPED(p_status))
+        {
+            if (!ALL_JOBS->_head_proc)
+            {
+                ALL_JOBS->_head_proc = malloc(sizeof(struct process));
+                ALL_JOBS->_tail_proc = ALL_JOBS->_head_proc;
+            }
+            else
+            {
+                ALL_JOBS->_tail_proc->_next = malloc(sizeof(struct process));
+                ALL_JOBS->_tail_proc = ALL_JOBS->_tail_proc->_next;
+            }
+            ALL_JOBS->_tail_proc->_cmd = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+            strcpy(ALL_JOBS->_tail_proc->_cmd, command);
+            ALL_JOBS->_tail_proc->_pid = childpids[i];
+            ALL_JOBS->_tail_proc->_next = NULL;
+            printf("Child Process %d is stopped\n", childpids[i]);
+        }
     }
     return 0;
 }
