@@ -1,4 +1,3 @@
-#include "cmdreader.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +11,7 @@
 
 // how to use getline: https://c-for-dummies.com/blog/?p=1112s
 // how to use getcwd: https://iq.opengenus.org/chdir-fchdir-getcwd-in-c/
-// how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-characters-from-a-line-of-input-instead-of-a
+// how to continuously getchar() from a line: https://stackoverflow.com/questions/33947693/why-does-getchar-continue-to-take-chars-from-a-line-of-input-instead-of-a
 // how to copy chars: https://stackoverflow.com/questions/6205195/given-a-starting-and-ending-indices-how-can-i-copy-part-of-a-string-in-c
 // how to include wait library: https://stackoverflow.com/questions/41884685/implicit-declaration-of-function-wait
 // how to use execv with a generated path in C?: https://stackoverflow.com/questions/52240612/how-to-use-execv-with-a-generated-path-in-c
@@ -27,75 +26,77 @@
 // how to initialize a struct in c: https://stackoverflow.com/questions/330793/how-to-initialize-a-struct-in-accordance-with-c-programming-language-standards
 // hwo to acessing a locally declared struct outside of its scope: https://stackoverflow.com/questions/27763407/acessing-a-locally-declared-struct-outside-of-its-scope
 
-// define process struct
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 typedef struct process
 {
     struct process *_next;
     int _pid;
     char *_cmd;
 } process;
-
-// define jobs struct
 typedef struct jobs
 {
-    struct process *_head_proc; // the head of the list
-    struct process *_tail_proc; // the tail of the list
+    struct process *_head_proc; // the head of the process list
+    struct process *_tail_proc; // the tail of the process list
 } jobs;
 
+//----------------------------------------------------------------------
+//    Global variables
+//----------------------------------------------------------------------
 struct jobs _ALL_JOBS = {._head_proc = NULL, ._tail_proc = NULL};
 struct jobs *ALL_JOBS = &_ALL_JOBS;
+const size_t CMD_BUFF_MAX = 1000;
+const size_t ARG_MAX = 50; // assume no more than ARG_MAX arguments
+size_t CMD_SIZE = CMD_BUFF_MAX * sizeof(char);
 
-size_t CMD_BUFF_MAX = 1000;
-size_t ARG_MAX = 10; // assume no more than ARG_MAX arguments
-
-void get_curdir(char *abs_path, char *relat_path);
-int my_system(char *command);
-int is_builtin_cmd(char *command);
-int builtin_cmd_handler(char *command);
-void invalid_cmd(char *err_msg);
-void _io_redir_handler(char **argv, int arrow_pos, int io_flag);
-void _redir_io(char **argv);
-void _add_path(char **subarg);
-void _split_cmd(char **cmdv, char ***cmdvv);
-int _split_pipe(char *command, char **cmdv);
-void _handle_proc_cont(int fg_idx);
-void _handle_proc_stp(int pid, char *cmd);
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+/*prompt-related*/
+void get_curdir(char *cur_dir);
+void handle_invalid_cmd(char *err_msg);
+/*handle io*/
+int help_ioredir(char **argv, int arrow_pos, int io_flag);
+int handle_ioredir(char **argv);
+/*handle builtin commands*/
+int check_is_builtin_cmd(char *command);
+int handle_builtin_cmd(char *command);
+/*handle commands*/
+int handle_system(char *command);
+int handle_pipe_split(char *command, char **cmdv); // split the whole command by pipe
+void handle_cmd_split(char **cmdv, char ***cmdvv); // split within command by space
+void handle_prog_locat(char **subarg);             // add path to program
+/*handle processes*/
+void handle_proc_cont(int fg_idx);        // continue child process
+void handle_proc_stp(int pid, char *cmd); // stop child process
 
 int main()
 {
-    int characters = 0;
-    char *abs_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-    char *relat_path = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-    char *cmd_buffer = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-    // ignore certain signals
+    int chars;
+    char *cur_dir = (char *)malloc(CMD_SIZE);
+    char *cmd = (char *)malloc(CMD_SIZE);
     signal(SIGINT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
     while (1)
     {
-        getcwd(abs_path, CMD_BUFF_MAX * sizeof(char));
-        get_curdir(abs_path, relat_path);
-        // print prompt
-        printf("[nyush %s]$ ", relat_path);
+        get_curdir(cur_dir);
+        printf("[nyush %s]$ ", cur_dir);
         fflush(stdout);
-        characters = getline(&cmd_buffer, &CMD_BUFF_MAX, stdin);
-        cmd_buffer[characters - 1] = '\0'; // remove newline
-        if (characters == -1)              // ctrl+d
+        chars = getline(&cmd, &CMD_SIZE, stdin);
+        cmd[chars - 1] = '\0'; // remove newline
+        if (chars == -1)       // ctrl+d
         {
             break;
         }
-        else if (characters == 1) // enter
+        else if (chars == 1) // enter
         {
             continue;
         }
-        else if (is_builtin_cmd(cmd_buffer))
+        else if (check_is_builtin_cmd(cmd))
         {
-            if (builtin_cmd_handler(cmd_buffer) == -1)
+            if (handle_builtin_cmd(cmd) == -1)
             {
                 if (ALL_JOBS->_head_proc != NULL)
                 {
-                    invalid_cmd("Error: there are suspended jobs\n");
+                    handle_invalid_cmd("Error: there are suspended jobs\n");
                     continue;
                 }
                 break;
@@ -103,9 +104,10 @@ int main()
         }
         else
         {
-            my_system(cmd_buffer);
+            handle_system(cmd);
         }
     }
+    /*clean up*/
     struct process *ptr = ALL_JOBS->_head_proc;
     struct process *nxt_ptr;
     while (ptr)
@@ -115,46 +117,34 @@ int main()
         free(ptr);
         ptr = nxt_ptr;
     }
-    free(abs_path);
-    free(relat_path);
-    free(cmd_buffer);
+    free(cur_dir);
+    free(cmd);
 }
 
-void get_curdir(char *abs_path, char *relat_path)
+void get_curdir(char *cur_dir)
 {
-    // if it's root
-    if (strlen(abs_path) == 1)
+    getcwd(cur_dir, CMD_SIZE);
+    if (strcmp(cur_dir, "/") != 0)
     {
-        strcpy(relat_path, abs_path);
-    }
-    else
-    {
-        // if it's a dir under root
-        for (int i = strlen(abs_path) - 1; i >= 0; i--)
-        {
-            if (abs_path[i] == '/')
-            {
-                strcpy(relat_path, abs_path + i + 1);
-                break;
-            }
-        }
+        char *lslash = strrchr(cur_dir, '/'); // e.g., "/2250"
+        strcpy(cur_dir, lslash + 1);
     }
 }
 
-void invalid_cmd(char *err_msg)
+void handle_invalid_cmd(char *err_msg)
 {
     fprintf(stderr, err_msg);
     fflush(stdout);
 }
 
-int is_builtin_cmd(char *command)
+int check_is_builtin_cmd(char *command)
 {
     if (strstr(command, "cd") || strstr(command, "jobs") || strstr(command, "fg") || strstr(command, "exit"))
         return 1;
     return 0;
 }
 
-int builtin_cmd_handler(char *command)
+int handle_builtin_cmd(char *command)
 {
     strtok(command, " ");          // return cmd itself
     char *arg = strtok(NULL, " "); // return first arg
@@ -163,7 +153,7 @@ int builtin_cmd_handler(char *command)
         // should take no argument
         if (arg != NULL)
         {
-            invalid_cmd("Error: invalid command\n");
+            handle_invalid_cmd("Error: invalid command\n");
             return 0;
         }
         if (strstr(command, "exit"))
@@ -172,7 +162,6 @@ int builtin_cmd_handler(char *command)
         }
         else if (strstr(command, "jobs")) // jobs cmd
         {
-            // TODO handle print jobs
             int count = 1;
             struct process *p_ptr = ALL_JOBS->_head_proc;
             while (p_ptr)
@@ -183,37 +172,35 @@ int builtin_cmd_handler(char *command)
             }
         }
     }
-    else if (strstr(command, "cd") || strstr(command, "fg"))
+    else if (strstr(command, "cd") || strstr(command, "fg")) // should not take 0 or 2+ arguments
     {
-        // should not take 0 or 2+ arguments
         if (arg == NULL || strtok(NULL, " ") != NULL)
         {
-            invalid_cmd("Error: invalid command\n");
+            handle_invalid_cmd("Error: invalid command\n");
             return 0;
         }
         if (strstr(command, "cd"))
         {
             if (chdir(arg) < 0)
             {
-                invalid_cmd("Error: invalid directory\n");
+                handle_invalid_cmd("Error: invalid directory\n");
             }
         }
         else if (strstr(command, "fg")) // fg cmd
         {
-            // TODO put child process to foreground
             int fg_idx = atoi(arg) - 1; // accomodate 0-indexed process list
-            _handle_proc_cont(fg_idx);
+            handle_proc_cont(fg_idx);
         }
     }
     return 0;
 }
 
-void _add_path(char **subarg)
+void handle_prog_locat(char **subarg)
 {
     char *prog = subarg[0];
-    char *slash_pos = strchr(prog, '/');                               // strrchr(target,key): find the first key and return the pointer or NULL
-    char *prog_fullpath = (char *)malloc(CMD_BUFF_MAX * sizeof(char)); // construct program's full path
-    if (slash_pos == NULL)                                             // only with base name
+    char *slash_pos = strchr(prog, '/');            // strrchr(target,key): find the first key and return the pointer or NULL
+    char *prog_fullpath = (char *)malloc(CMD_SIZE); // construct program's full path
+    if (slash_pos == NULL)                          // only with base name
     {
         strcpy(prog_fullpath, "/usr/bin/");
     }
@@ -221,57 +208,42 @@ void _add_path(char **subarg)
     subarg[0] = prog_fullpath;
 }
 
-char **_copy_cmd(int subargc, char **argv)
-{
-    /*
-    return a copy of the command line arguments
-    */
-    char **subargv = malloc(sizeof(char *) * (subargc + 1)); // +1 to add a null to signal the end
-    for (int count = 0; count < subargc; count++)
-    {
-        const int arglen = strlen(argv[count]);
-        char *arg = (char *)malloc(arglen + 1); // +1 for the \0
-        strcpy(arg, argv[count]);
-        subargv[count] = arg;
-    }
-    subargv[subargc] = NULL;
-    return subargv;
-}
-
-int _split_pipe(char *command, char **cmdv)
+int handle_pipe_split(char *command, char **cmdv)
 {
     // input: {"cmd1", "arg1" ,"|", "cmd2", "arg2", "|", "cmd3", "arg3", "|" ...
     // output: { {"cmd1", "arg1"}, {"cmd2", "arg2"}, {"cmd3", "arg3"}, ..., NULL}
-    int subcmd = 0;
+    int cmd_c = 0;
     int num_pipes = 0;
-    if (strstr(command, "|"))
+    char *copy_command = (char *)malloc(CMD_SIZE);
+    strcpy(copy_command, command);
+    char *cmd = strstr(copy_command, "|");
+    if (cmd != NULL)
     {
-        char *cmd = strtok(command, "|"); // split by |
+        cmd = strtok(copy_command, "|");
         while (cmd)
         {
-            cmdv[subcmd] = cmd; //{prog_path, prog_name, arg1, arg2, ..., NULL}
-            subcmd++;
+            cmdv[cmd_c] = cmd;
+            cmd_c++;
             cmd = strtok(NULL, "|");
-            if (cmd)
+            if (cmd != NULL)
                 num_pipes++;
         };
-        // printf("# of cmd: %d; # of pipes: %d\n", subcmd, num_pipes);
-        if ((num_pipes == 0) | (subcmd != num_pipes + 1))
+        if ((num_pipes == 0) | (cmd_c != num_pipes + 1)) // | cat
         {
-            invalid_cmd("Error: invalid command\n");
+            handle_invalid_cmd("Error: invalid command\n");
             return -1;
         }
     }
     else
     {
-        cmdv[subcmd] = command;
-        subcmd++;
+        cmdv[cmd_c] = copy_command;
+        cmd_c++;
     }
-    cmdv[subcmd] = NULL;
-    return subcmd;
+    cmdv[cmd_c] = NULL;
+    return cmd_c;
 }
 
-void _split_cmd(char **cmdv, char ***cmdvv)
+void handle_cmd_split(char **cmdv, char ***cmdvv)
 {
     /*
     input: cmdv: {"ls -l","cat"...NULL}
@@ -282,16 +254,14 @@ void _split_cmd(char **cmdv, char ***cmdvv)
     for (int i = 0; cmdv[i]; i++)
     {
         int subcmdc = 0;
-        // assume a cmd has no more than 10 arg
         subcmdv = malloc(sizeof(char *) * (ARG_MAX));
         if (!strstr(cmdv[i], " ")) // no args
         {
             subcmdv[subcmdc] = cmdv[i];
             subcmdc++;
         }
-        else
+        else // has args
         {
-            // has args
             subcmd = strtok(cmdv[i], " ");
             while (subcmd)
             {
@@ -305,7 +275,7 @@ void _split_cmd(char **cmdv, char ***cmdvv)
     }
 }
 
-void _redir_io(char **argv)
+int handle_ioredir(char **argv)
 {
     int in_redirect = 0;
     int out_redirect = 0;
@@ -318,12 +288,12 @@ void _redir_io(char **argv)
             out_redirect = i;
         i++;
     };
-    // handle input redirect
     if (in_redirect)
-        _io_redir_handler(argv, in_redirect, 0);
-    // handle output  redirect
+        if (help_ioredir(argv, in_redirect, 0) == -1)
+            return -1;
     if (out_redirect)
-        _io_redir_handler(argv, out_redirect, 1);
+        if (help_ioredir(argv, out_redirect, 1) == -1)
+            return -1;
     if (in_redirect || out_redirect)
     {
         int arrow_pos = (MIN(in_redirect, out_redirect) != 0 ? MIN(in_redirect, out_redirect) : MAX(in_redirect, out_redirect));
@@ -331,8 +301,9 @@ void _redir_io(char **argv)
         // ignore the input after first arrow_pos
         argv[arrow_pos] = NULL;
     }
+    return 0;
 }
-void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
+int help_ioredir(char **argv, int arrow_pos, int io_flag)
 {
     char *file;
     if (argv[arrow_pos + 1] != NULL)
@@ -342,42 +313,44 @@ void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
         int fd;
         if (io_flag) // output
         {
-            // printf("wrote output to %s\n", file);
             fd = open(file, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
-            if (fd < 0) // check if file exists
-                invalid_cmd("Error: invalid file\n");
+            if (fd < 0)
+            {
+                handle_invalid_cmd("Error: invalid file\n");
+                return -1;
+            }
             dup2(fd, 1);
         }
         else // input
         {
-            //  printf("wrote input to %s\n", file);
             fd = open(file, O_RDONLY);
-            if (fd < 0) // check if file exists
-                invalid_cmd("Error: invalid file\n");
+            if (fd < 0)
+            {
+                handle_invalid_cmd("Error: invalid file\n");
+                return -1;
+            }
             dup2(fd, 0);
         }
         close(fd);
         free(file);
+        return 0;
     }
     else // no file specified
     {
-        invalid_cmd("Error: invalid command\n");
+        handle_invalid_cmd("Error: invalid command\n");
+        return -1;
     }
 }
 
-int my_system(char *command)
+int handle_system(char *command)
 {
-    char *copy_command = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-    strcpy(copy_command, command);
     char *cmdv[100];
     char **cmdvv[100];
     int childpids[100];
     int num_p;
-    // determine num of processes and split by pipe
-    // return -1 if pipe command is illegal
-    if ((num_p = _split_pipe(command, cmdv)) == -1)
-        return -1;
-    _split_cmd(cmdv, cmdvv);
+    if ((num_p = handle_pipe_split(command, cmdv)) == -1) // determine num of processes and split by pipe
+        return -1;                                        // return -1 if pipe command is illegal
+    handle_cmd_split(cmdv, cmdvv);
     // for (int i = 0; i < num_p; i++)
     // {
     //     printf("cmdv[%d]: %s\n", i, cmdv[i]);
@@ -397,7 +370,7 @@ int my_system(char *command)
     {
         if (pipe(all_fildes + i * 2) == -1)
         {
-            invalid_cmd("Error: creating pipe\n");
+            handle_invalid_cmd("Error: creating pipe\n");
             exit(-1);
         }
     }
@@ -405,14 +378,12 @@ int my_system(char *command)
     {
         if ((childpids[i] = fork()) < 0) // child processes
         {
-            // fork failed (this shouldn't happen)
-            invalid_cmd("Error: fork failed\n");
+            handle_invalid_cmd("Error: fork failed\n");
             exit(1);
         }
         else if (childpids[i] == 0) // child processes
         {
-            // handle pipe redirection
-            if (num_p > 1)
+            if (num_p > 1) // handle pipe redirection
             {
                 // pro0 | pro1 | pro2 | pro3
                 if (i > 0) // every process execept the first has stdin redirection
@@ -423,43 +394,39 @@ int my_system(char *command)
                 {
                     dup2(all_fildes[2 * i + 1], 1); // change stdout to pipe output
                 }
-                for (int i = 0; i < num_p - 1; i++)
+                for (int i = 0; i < num_p - 1; i++) // close all file descriptors
                 {
                     close(all_fildes[2 * i]);
                     close(all_fildes[2 * i + 1]);
                 }
             }
             char **subarg = cmdvv[i];
-            //  printf("[son] pid %d from [parent] pid %d\n", getpid(), getppid());
-            _add_path(subarg);
-            _redir_io(subarg);
+            handle_prog_locat(subarg);
+            if (handle_ioredir(subarg) < 0)
+                exit(1);
             signal(SIGINT, SIG_DFL);
             signal(SIGTSTP, SIG_DFL);
             execv(subarg[0], subarg);
-            invalid_cmd("Error: invalid program\n");
+            handle_invalid_cmd("Error: invalid program\n");
             exit(1);
         }
     }
-    // parent waits for the children process
     for (int i = 0; i < num_p - 1; i++)
     {
-        // printf("pipe%d: rdes=%d and wdes=%d\n", i, all_fildes[2 * i], all_fildes[2 * i + 1]);
         close(all_fildes[2 * i]);
         close(all_fildes[2 * i + 1]);
     }
     int p_status;
     for (int i = 0; i < num_p; i++)
     {
-        // printf("Process %d\n", childpids[i]);
-        // TASK1: read the status and handle STOP child process
         waitpid(childpids[i], &p_status, WUNTRACED);
         if (WIFSTOPPED(p_status))
-            _handle_proc_stp(childpids[i], copy_command);
+            handle_proc_stp(childpids[i], command);
     }
     return 0;
 }
 
-void _handle_proc_stp(int pid, char *command)
+void handle_proc_stp(int pid, char *command)
 {
     if (!ALL_JOBS->_head_proc)
     {
@@ -471,13 +438,12 @@ void _handle_proc_stp(int pid, char *command)
         ALL_JOBS->_tail_proc->_next = malloc(sizeof(struct process));
         ALL_JOBS->_tail_proc = ALL_JOBS->_tail_proc->_next;
     }
-    ALL_JOBS->_tail_proc->_cmd = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    ALL_JOBS->_tail_proc->_cmd = (char *)malloc(CMD_SIZE);
     strcpy(ALL_JOBS->_tail_proc->_cmd, command);
     ALL_JOBS->_tail_proc->_pid = pid;
     ALL_JOBS->_tail_proc->_next = NULL;
-    // printf("Child Process %d is stopped\n", childpids[i]);
 }
-void _handle_proc_cont(int fg_idx)
+void handle_proc_cont(int fg_idx)
 {
     int p_status;
     struct process *ptr = ALL_JOBS->_head_proc;
@@ -507,18 +473,18 @@ void _handle_proc_cont(int fg_idx)
         {
             waitpid(pid, &p_status, WUNTRACED);
             if (WIFSTOPPED(p_status))
-                _handle_proc_stp(pid, ptr->_cmd);
+                handle_proc_stp(pid, ptr->_cmd);
             free(ptr->_cmd);
             free(ptr);
         }
         else
         {
-            invalid_cmd("Error: continue job failed\n");
+            handle_invalid_cmd("Error: continue job failed\n");
             exit(1);
         }
     }
     else
     {
-        invalid_cmd("Error: invalid job\n");
+        handle_invalid_cmd("Error: invalid job\n");
     }
 }
