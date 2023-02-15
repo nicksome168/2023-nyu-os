@@ -32,7 +32,6 @@ typedef struct process
 {
     struct process *_next;
     int _pid;
-    int _fildes[2];
     char *_cmd;
 } process;
 
@@ -59,7 +58,8 @@ void _redir_io(char **argv);
 void _add_path(char **subarg);
 void _split_cmd(char **cmdv, char ***cmdvv);
 int _split_pipe(char *command, char **cmdv);
-
+void _handle_proc_cont(int fg_idx);
+void _handle_proc_stp(int pid, char *cmd);
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -92,7 +92,14 @@ int main()
         else if (is_builtin_cmd(cmd_buffer))
         {
             if (builtin_cmd_handler(cmd_buffer) == -1)
+            {
+                if (ALL_JOBS->_head_proc != NULL)
+                {
+                    invalid_cmd("Error: there are suspended jobs\n");
+                    continue;
+                }
                 break;
+            }
         }
         else
         {
@@ -149,8 +156,8 @@ int is_builtin_cmd(char *command)
 
 int builtin_cmd_handler(char *command)
 {
-    strtok(command, " ");          // cmd itself
-    char *arg = strtok(NULL, " "); // first arg
+    strtok(command, " ");          // return cmd itself
+    char *arg = strtok(NULL, " "); // return first arg
     if (strstr(command, "jobs") || strstr(command, "exit"))
     {
         // should take no argument
@@ -163,7 +170,7 @@ int builtin_cmd_handler(char *command)
         {
             return -1;
         }
-        else // jobs cmd
+        else if (strstr(command, "jobs")) // jobs cmd
         {
             // TODO handle print jobs
             int count = 1;
@@ -191,10 +198,11 @@ int builtin_cmd_handler(char *command)
                 invalid_cmd("Error: invalid directory\n");
             }
         }
-        else // fg cmd
+        else if (strstr(command, "fg")) // fg cmd
         {
             // TODO put child process to foreground
-            // how to wait for child process
+            int fg_idx = atoi(arg) - 1; // accomodate 0-indexed process list
+            _handle_proc_cont(fg_idx);
         }
     }
     return 0;
@@ -359,6 +367,8 @@ void _io_redir_handler(char **argv, int arrow_pos, int io_flag)
 
 int my_system(char *command)
 {
+    char *copy_command = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    strcpy(copy_command, command);
     char *cmdv[100];
     char **cmdvv[100];
     int childpids[100];
@@ -444,23 +454,71 @@ int my_system(char *command)
         // TASK1: read the status and handle STOP child process
         waitpid(childpids[i], &p_status, WUNTRACED);
         if (WIFSTOPPED(p_status))
-        {
-            if (!ALL_JOBS->_head_proc)
-            {
-                ALL_JOBS->_head_proc = malloc(sizeof(struct process));
-                ALL_JOBS->_tail_proc = ALL_JOBS->_head_proc;
-            }
-            else
-            {
-                ALL_JOBS->_tail_proc->_next = malloc(sizeof(struct process));
-                ALL_JOBS->_tail_proc = ALL_JOBS->_tail_proc->_next;
-            }
-            ALL_JOBS->_tail_proc->_cmd = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
-            strcpy(ALL_JOBS->_tail_proc->_cmd, command);
-            ALL_JOBS->_tail_proc->_pid = childpids[i];
-            ALL_JOBS->_tail_proc->_next = NULL;
-            printf("Child Process %d is stopped\n", childpids[i]);
-        }
+            _handle_proc_stp(childpids[i], copy_command);
     }
     return 0;
+}
+
+void _handle_proc_stp(int pid, char *command)
+{
+    if (!ALL_JOBS->_head_proc)
+    {
+        ALL_JOBS->_head_proc = malloc(sizeof(struct process));
+        ALL_JOBS->_tail_proc = ALL_JOBS->_head_proc;
+    }
+    else
+    {
+        ALL_JOBS->_tail_proc->_next = malloc(sizeof(struct process));
+        ALL_JOBS->_tail_proc = ALL_JOBS->_tail_proc->_next;
+    }
+    ALL_JOBS->_tail_proc->_cmd = (char *)malloc(CMD_BUFF_MAX * sizeof(char));
+    strcpy(ALL_JOBS->_tail_proc->_cmd, command);
+    ALL_JOBS->_tail_proc->_pid = pid;
+    ALL_JOBS->_tail_proc->_next = NULL;
+    // printf("Child Process %d is stopped\n", childpids[i]);
+}
+void _handle_proc_cont(int fg_idx)
+{
+    int p_status;
+    struct process *ptr = ALL_JOBS->_head_proc;
+    struct process *pre_ptr = NULL;
+    while (fg_idx > 0 && ptr && (ptr != ALL_JOBS->_tail_proc))
+    {
+        fg_idx--;
+        pre_ptr = ptr;
+        ptr = ptr->_next;
+    }
+    if (ptr && fg_idx == 0)
+    {
+        if (ptr == ALL_JOBS->_tail_proc) // located at the tail
+        {
+            ALL_JOBS->_tail_proc = pre_ptr;
+        }
+        if (pre_ptr == NULL) // located at the head
+        {
+            ALL_JOBS->_head_proc = ptr->_next;
+        }
+        else // located in the middle
+        {
+            pre_ptr->_next = ptr->_next;
+        }
+        int pid = ptr->_pid;
+        if (kill(pid, SIGCONT) == 0)
+        {
+            waitpid(pid, &p_status, WUNTRACED);
+            if (WIFSTOPPED(p_status))
+                _handle_proc_stp(pid, ptr->_cmd);
+            free(ptr->_cmd);
+            free(ptr);
+        }
+        else
+        {
+            invalid_cmd("Error: continue job failed\n");
+            exit(1);
+        }
+    }
+    else
+    {
+        invalid_cmd("Error: invalid job\n");
+    }
 }
