@@ -351,20 +351,7 @@ int handle_system(char *command)
     if ((num_p = handle_pipe_split(command, cmdv)) == -1) // determine num of processes and split by pipe
         return -1;                                        // return -1 if pipe command is illegal
     handle_cmd_split(cmdv, cmdvv);
-    // for (int i = 0; i < num_p; i++)
-    // {
-    //     printf("cmdv[%d]: %s\n", i, cmdv[i]);
-    // }
-
-    // for (int i = 0; cmdvv[i] != NULL; i++)
-    // {
-    //     printf("argvv[%d]:", i);
-    //     for (int j = 0; cmdvv[i][j] != NULL; j++)
-    //         printf("%s ", cmdvv[i][j]);
-    //     printf("\n");
-    // }
-    // printf("num_p: %d\n", num_p);
-    //  for loop create child processes
+    /*create file descriptor*/
     int all_fildes[2 * (num_p - 1)];
     for (int i = 0; i < num_p - 1; i++)
     {
@@ -374,6 +361,7 @@ int handle_system(char *command)
             exit(-1);
         }
     }
+    /*create child process*/
     for (int i = 0; i < num_p; i++)
     {
         if ((childpids[i] = fork()) < 0) // child processes
