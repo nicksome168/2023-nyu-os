@@ -63,7 +63,7 @@ int handle_builtin_cmd(char *command);
 int handle_system(char *command);
 int handle_pipe_split(char *command, char **cmdv); // split the whole command by pipe
 void handle_cmd_split(char **cmdv, char ***cmdvv); // split within command by space
-void handle_prog_locat(char **subarg);             // add path to program
+char *handle_prog_locat(char **subarg);            // add path to program
 /*handle processes*/
 void handle_proc_cont(int fg_idx);        // continue child process
 void handle_proc_stp(int pid, char *cmd); // stop child process
@@ -195,7 +195,7 @@ int handle_builtin_cmd(char *command)
     return 0;
 }
 
-void handle_prog_locat(char **subarg)
+char *handle_prog_locat(char **subarg)
 {
     char *prog = subarg[0];
     char *slash_pos = strchr(prog, '/');            // strrchr(target,key): find the first key and return the pointer or NULL
@@ -205,7 +205,7 @@ void handle_prog_locat(char **subarg)
         strcpy(prog_fullpath, "/usr/bin/");
     }
     strcat(prog_fullpath, prog);
-    subarg[0] = prog_fullpath;
+    return prog_fullpath;
 }
 
 int handle_pipe_split(char *command, char **cmdv)
@@ -389,12 +389,12 @@ int handle_system(char *command)
                 }
             }
             char **subarg = cmdvv[i];
-            handle_prog_locat(subarg);
+            char *prog_path = handle_prog_locat(subarg);
             if (handle_ioredir(subarg) < 0)
                 exit(1);
             signal(SIGINT, SIG_DFL);
             signal(SIGTSTP, SIG_DFL);
-            execv(subarg[0], subarg);
+            execv(prog_path, subarg);
             handle_invalid_cmd("Error: invalid program\n");
             exit(1);
         }
