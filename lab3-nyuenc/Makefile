@@ -1,5 +1,6 @@
 CC=gcc
 CFLAGS=-g -pedantic -std=gnu17 -Wall -Werror -Wextra
+LDFLAGS=-pthread
 
 .PHONY: all
 all: nyuenc
@@ -14,7 +15,6 @@ clean:
 
 .PHONY: test
 test:
-	tar xf nyuenc-autograder.tar.xz
 	zip nyuenc.zip Makefile *.h *.c
 	cp nyuenc.zip nyuenc-autograder
 
