@@ -16,7 +16,9 @@
 // 3/23
 // 1.5 hour: debugging
 // 1.5 hour: debugging
-// 4.20-
+// 1 hour: debugging. case 2
+// 3/25
+// 4.15-
 
 // research on encode_chunck() interface to be used in pthread
 // decouple _encode() from encode_chunck()
@@ -24,32 +26,34 @@
 // how to use getopt: https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
 // how to use pthread: http://www.cse.cuhk.edu.hk/~ericlo/teaching/os/lab/9-PThread/Pass.html
 
-#define CHUNK_SIZE (1024 * 4) // 4kb
+#define MAX_FILE_SIZE (1024 * 1024 * 1024) // 1GB
+#define CHUNK_SIZE (1024 * 4)              // 4kb
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define UNUSED(x) (void)(x)
 
 typedef struct
 {
     char *chars;
-    unsigned char *count;
-    size_t _size;
-    size_t _idx;
+    unsigned char *counts;
+    size_t size;
 } data;
 
 pthread_mutex_t todoTaskMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t doneTaskMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t isEnough = PTHREAD_COND_INITIALIZER;
-char *todoTaskQueue = NULL;
-data *doneTaskQueue = NULL;
-size_t doneTaskQueueTail = 0;
+char todoTaskQueue[MAX_FILE_SIZE];
+data *doneTaskQueue[MAX_FILE_SIZE / CHUNK_SIZE + 1];
+size_t doneTaskQueueSize = 0;
 size_t todoTaskQueueTail = 0;
 size_t todoTaskQueueHead = 0;
 int doneIO = 0;
 
-size_t read_file_size(int argc, char **argv);
-void writeStd(size_t chunkIdx, size_t charIdx);
+void writeStd(char c, unsigned char count);
 void handle_error(char *err_msg);
 void encode(size_t chunkHead, size_t chunkSize);
 void *encode_chunk();
+void output();
+void freeMem();
 
 int main(int argc, char **argv)
 {
@@ -61,7 +65,7 @@ int main(int argc, char **argv)
     int c = 0;
     int workerNum = 1;
     /*READ COMMAND LINE INPUT*/
-    while ((c = getopt(argc, argv, "j")) != -1)
+    while ((c = getopt(argc, argv, "j:")) != -1)
     {
         switch (c)
         {
@@ -74,17 +78,16 @@ int main(int argc, char **argv)
     }
     /*SPAWN THREAD WORKERS*/
     pthread_t workerThread[workerNum];
+    int workerId[workerNum];
     for (int i = 0; i < workerNum; i++)
     {
-        pthread_create(&workerThread[i], NULL, encode_chunk, NULL);
+        workerId[i] = i;
+        pthread_create(&workerThread[i], NULL, encode_chunk, &workerId[i]);
     }
     /*READ DATA*/
     int fd = 0;
     struct stat sb;
     char *addr = NULL;
-    size_t TOTAL_FILE_SIZE = read_file_size(argc, argv);
-    todoTaskQueue = malloc(TOTAL_FILE_SIZE * sizeof(char));
-    doneTaskQueue = malloc(TOTAL_FILE_SIZE * sizeof(data));
     for (int i = optind; i < argc; i++)
     {
         if ((fd = open(argv[i], O_RDONLY)) == -1)
@@ -93,13 +96,28 @@ int main(int argc, char **argv)
             handle_error("fstat failed");
         if ((addr = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
             handle_error("mmap failed");
-        memcpy(todoTaskQueue + todoTaskQueueTail, addr, sb.st_size);
-        pthread_mutex_lock(&todoTaskMutex);
-        todoTaskQueueTail += sb.st_size;
-        if (todoTaskQueueHead + CHUNK_SIZE <= todoTaskQueueTail)
-            pthread_cond_signal(&isEnough);
-        // printf("File size %zu\n", sb.st_size);
-        pthread_mutex_unlock(&todoTaskMutex);
+        size_t offset = 0;
+        size_t fileSize = (size_t)sb.st_size;
+        size_t chunkSize = 0;
+        // printf("file size: %zu\n", fileSize);
+        while (offset < fileSize)
+        {
+            chunkSize = CHUNK_SIZE * (workerNum * 2);
+            chunkSize = MIN(fileSize - offset, chunkSize);
+            pthread_mutex_lock(&todoTaskMutex);
+            memcpy(todoTaskQueue + todoTaskQueueTail, addr + offset, chunkSize);
+            todoTaskQueueTail += chunkSize;
+            if (todoTaskQueueHead + CHUNK_SIZE <= todoTaskQueueTail)
+                pthread_cond_signal(&isEnough);
+            pthread_mutex_unlock(&todoTaskMutex);
+            offset += chunkSize;
+        }
+        // memcpy(todoTaskQueue + todoTaskQueueTail, addr, sb.st_size);
+        // pthread_mutex_lock(&todoTaskMutex);
+        // todoTaskQueueTail += sb.st_size;
+        // if (todoTaskQueueHead + CHUNK_SIZE <= todoTaskQueueTail)
+        //     pthread_cond_signal(&isEnough);
+        // pthread_mutex_unlock(&todoTaskMutex);
         if (munmap(addr, sb.st_size) == -1)
             handle_error("munmap failed");
         if (close(fd) == -1)
@@ -114,132 +132,130 @@ int main(int argc, char **argv)
     {
         pthread_join(workerThread[i], NULL);
     }
-    // // printf("done\n");
     /*MERGE RESULTS*/
-    size_t lastItemInPrevChunk = 0;
-    for (size_t i = 0; i < doneTaskQueueTail; i++)
-    {
-        // printf("Chunk %zu with %zu chars\n", i, doneTaskQueue[i]->_size);
-        for (size_t j = 0; j < doneTaskQueue[i]._size - 1; j++)
-        {
-            if (j == 0 && i > 0) // stich result together
-            {
-                if (doneTaskQueue[i].chars[j] == doneTaskQueue[i - 1].chars[lastItemInPrevChunk])
-                    doneTaskQueue[i].count[j] += doneTaskQueue[i - 1].count[lastItemInPrevChunk];
-                else
-                {
-                    writeStd(i - 1, lastItemInPrevChunk);
-                }
-            }
-            writeStd(i, j);
-        }
-        lastItemInPrevChunk = doneTaskQueue[i]._size - 1;
-    }
-    if (doneTaskQueueTail > 0)
-        writeStd(doneTaskQueueTail - 1, lastItemInPrevChunk);
-    for (size_t i = 0; i < doneTaskQueueTail; i++)
-    {
-        free(doneTaskQueue[i].chars);
-        free(doneTaskQueue[i].count);
-    }
-    free(todoTaskQueue);
-    free(doneTaskQueue);
+    output();
+    freeMem();
     return 0;
 }
-
-size_t read_file_size(int argc, char **argv)
+void output()
 {
-    int fd = 0;
-    struct stat sb;
-    size_t total_file_size = 0;
-    for (int i = optind; i < argc; i++)
+    // the last chunk only has one char
+    char lastChar = 0;
+    unsigned char lastCount = 0;
+    for (size_t i = 0; i < doneTaskQueueSize; i++)
     {
-        if ((fd = open(argv[i], O_RDONLY)) == -1)
-            handle_error("open failed");
-        if (fstat(fd, &sb) == -1)
-            handle_error("fstat failed");
-        total_file_size += sb.st_size;
-        if (close(fd) == -1)
-            handle_error("close failed");
-    }
-    return total_file_size;
-}
-
-void writeStd(size_t chunkIdx, size_t charIdx)
-{
-    if (fwrite(&doneTaskQueue[chunkIdx].chars[charIdx], sizeof(char), 1, stdout) != 1)
-    {
-        handle_error("fwrite failed");
-    }
-    if (fwrite(&doneTaskQueue[chunkIdx].count[charIdx], sizeof(char), 1, stdout) != 1)
-    {
-        handle_error("fwrite failed");
+        size_t chunkSize = doneTaskQueue[i]->size;
+        for (size_t j = 0; j < chunkSize; j++)
+        {
+            if (j == 0 && i > 0)
+            {
+                if (doneTaskQueue[i]->chars[j] == lastChar)
+                    doneTaskQueue[i]->counts[j] += lastCount;
+                else
+                    writeStd(lastChar, lastCount);
+            }
+            else if (j == chunkSize - 1 && i != doneTaskQueueSize - 1)
+                break;
+            writeStd(doneTaskQueue[i]->chars[j], doneTaskQueue[i]->counts[j]);
+        }
+        lastChar = doneTaskQueue[i]->chars[chunkSize - 1];
+        lastCount = doneTaskQueue[i]->counts[chunkSize - 1];
     }
 }
 
-void *encode_chunk()
+void writeStd(char c, unsigned char count)
 {
+    if (fwrite(&c, sizeof(char), 1, stdout) != 1)
+    {
+        handle_error("fwrite failed");
+    }
+    if (fwrite(&count, sizeof(unsigned char), 1, stdout) != 1)
+    {
+        handle_error("fwrite failed");
+    }
+}
+
+void freeMem()
+{
+    for (size_t i = 0; i < doneTaskQueueSize; i++)
+    {
+        // printf("freeing chunk %zu\n", i);
+        free(doneTaskQueue[i]->chars);
+        free(doneTaskQueue[i]->counts);
+        free(doneTaskQueue[i]);
+    }
+}
+
+void *encode_chunk(void *workerId)
+{
+    int _id = *(int *)workerId;
+    UNUSED(_id);
     for (;;)
     {
+        size_t head = 0;
         size_t chunkSize = 0;
         pthread_mutex_lock(&todoTaskMutex);
         while (!doneIO && (todoTaskQueueHead + CHUNK_SIZE > todoTaskQueueTail))
             pthread_cond_wait(&isEnough, &todoTaskMutex);
-        // // printf("thread done waiting\n");
-        printf("head: %zu, tail: %zu\n", todoTaskQueueHead, todoTaskQueueTail);
         if (todoTaskQueueHead >= todoTaskQueueTail) // empty
         {
             // printf("no more data\n");
             pthread_mutex_unlock(&todoTaskMutex);
+            pthread_cond_broadcast(&isEnough);
             break;
         }
         else
         {
+            head = todoTaskQueueHead;
             chunkSize = MIN(CHUNK_SIZE, todoTaskQueueTail - todoTaskQueueHead);
             todoTaskQueueHead += chunkSize;
         }
+        // printf("thread %d encode from %zu to %zu\n", _id, head, todoTaskQueueHead);
         pthread_mutex_unlock(&todoTaskMutex);
-        encode(todoTaskQueueHead - chunkSize, chunkSize);
+        encode(head, chunkSize);
     }
     pthread_exit(NULL);
 }
 
 void encode(size_t chunkHead, size_t chunkSize)
 {
-    char *tmpChars = malloc(sizeof(char) * (chunkSize / 2 + 1));
-    unsigned char *tmpCount = malloc(sizeof(unsigned char) * (chunkSize / 2 + 1));
+    char *tmpChars = malloc(sizeof(char) * (chunkSize * 2));
+    unsigned char *tmpCounts = malloc(sizeof(unsigned char) * (chunkSize * 2));
     int idx = 0;
     tmpChars[idx] = todoTaskQueue[chunkHead];
-    tmpCount[idx] = 1;
-    printf("Encoding chunk from %zu to %zu\n", chunkHead, chunkHead + chunkSize);
+    tmpCounts[idx] = 1;
     for (size_t i = chunkHead + 1; i < chunkHead + chunkSize; i++)
     {
         // printf("prev char: %c; cur char: %c\n", tmpChars[idx], todoTaskQueue[i]);
         if (todoTaskQueue[i] == tmpChars[idx])
         {
-            tmpCount[idx]++;
+            tmpCounts[idx]++;
         }
         else
         {
             idx++;
             tmpChars[idx] = todoTaskQueue[i];
-            tmpCount[idx] = 1;
+            tmpCounts[idx] = 1;
         }
     }
-    printf("size of struct: %zu\n", sizeof(data));
+    // printf("size of struct: %zu\n", sizeof(data));
     data *doneChunk = malloc(sizeof(data));
     doneChunk->chars = tmpChars;
-    doneChunk->count = tmpCount;
-    doneChunk->_size = idx + 1;
-    doneChunk->_idx = chunkHead;
+    doneChunk->counts = tmpCounts;
+    doneChunk->size = idx + 1;
     pthread_mutex_lock(&doneTaskMutex);
-    doneTaskQueue[doneTaskQueueTail++] = *doneChunk;
+    doneTaskQueueSize++;
+    // printf("Encoding chunk from %zu to %zu\n", chunkHead, chunkHead + chunkSize);
+    // printf("writing chunk %zu\n", chunkHead / CHUNK_SIZE);
+    doneTaskQueue[chunkHead / CHUNK_SIZE] = doneChunk;
     pthread_mutex_unlock(&doneTaskMutex);
 }
 
 void handle_error(char *err_msg)
 {
-    fprintf(stderr, "%s", err_msg);
-    fflush(stdout);
-    exit(1);
+    UNUSED(err_msg);
+    // fprintf(stderr, "%s", err_msg);
+    // fflush(stdout);
+    freeMem();
+    exit(0);
 }
