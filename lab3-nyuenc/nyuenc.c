@@ -18,7 +18,8 @@
 // 1.5 hour: debugging
 // 1 hour: debugging. case 2
 // 3/25
-// 4.15-
+// 1 hour: debugging. case 3
+//
 
 // research on encode_chunck() interface to be used in pthread
 // decouple _encode() from encode_chunck()
@@ -33,8 +34,7 @@
 
 typedef struct
 {
-    char *chars;
-    unsigned char *counts;
+    unsigned char *encs;
     size_t size;
 } data;
 
@@ -139,27 +139,27 @@ int main(int argc, char **argv)
 }
 void output()
 {
-    // the last chunk only has one char
-    char lastChar = 0;
+    char lastChar = -1;
     unsigned char lastCount = 0;
     for (size_t i = 0; i < doneTaskQueueSize; i++)
     {
-        size_t chunkSize = doneTaskQueue[i]->size;
-        for (size_t j = 0; j < chunkSize; j++)
+        size_t chunkSize = doneTaskQueue[i]->size - 2;
+        if (i == doneTaskQueueSize - 1)
+            chunkSize += 2;
+        // printf("chunk %zu size: %zu", i, chunkSize);
+        if (lastChar != (char)-1)
         {
-            if (j == 0 && i > 0)
-            {
-                if (doneTaskQueue[i]->chars[j] == lastChar)
-                    doneTaskQueue[i]->counts[j] += lastCount;
-                else
-                    writeStd(lastChar, lastCount);
-            }
-            else if (j == chunkSize - 1 && i != doneTaskQueueSize - 1)
-                break;
-            writeStd(doneTaskQueue[i]->chars[j], doneTaskQueue[i]->counts[j]);
+            if (lastChar == doneTaskQueue[i]->encs[0])
+                doneTaskQueue[i]->encs[1] += lastCount;
+            else
+                writeStd(lastChar, lastCount);
         }
-        lastChar = doneTaskQueue[i]->chars[chunkSize - 1];
-        lastCount = doneTaskQueue[i]->counts[chunkSize - 1];
+        if (fwrite(doneTaskQueue[i]->encs, sizeof(unsigned char), chunkSize, stdout) != chunkSize)
+        {
+            handle_error("fwrite failed");
+        }
+        lastChar = doneTaskQueue[i]->encs[chunkSize];
+        lastCount = doneTaskQueue[i]->encs[chunkSize + 1];
     }
 }
 
@@ -180,8 +180,7 @@ void freeMem()
     for (size_t i = 0; i < doneTaskQueueSize; i++)
     {
         // printf("freeing chunk %zu\n", i);
-        free(doneTaskQueue[i]->chars);
-        free(doneTaskQueue[i]->counts);
+        free(doneTaskQueue[i]->encs);
         free(doneTaskQueue[i]);
     }
 }
@@ -219,30 +218,30 @@ void *encode_chunk(void *workerId)
 
 void encode(size_t chunkHead, size_t chunkSize)
 {
-    char *tmpChars = malloc(sizeof(char) * (chunkSize * 2));
-    unsigned char *tmpCounts = malloc(sizeof(unsigned char) * (chunkSize * 2));
+    // char *tmpChars = malloc(sizeof(char) * (chunkSize * 2));
+    unsigned char *tmpEnc = malloc(sizeof(unsigned char) * (chunkSize * 4));
     int idx = 0;
-    tmpChars[idx] = todoTaskQueue[chunkHead];
-    tmpCounts[idx] = 1;
+    // tmpChars[idx] = todoTaskQueue[chunkHead];
+    tmpEnc[idx] = todoTaskQueue[chunkHead];
+    tmpEnc[idx + 1] = 1;
     for (size_t i = chunkHead + 1; i < chunkHead + chunkSize; i++)
     {
-        // printf("prev char: %c; cur char: %c\n", tmpChars[idx], todoTaskQueue[i]);
-        if (todoTaskQueue[i] == tmpChars[idx])
+        if (todoTaskQueue[i] == tmpEnc[idx])
         {
-            tmpCounts[idx]++;
+            tmpEnc[idx + 1]++;
         }
         else
         {
-            idx++;
-            tmpChars[idx] = todoTaskQueue[i];
-            tmpCounts[idx] = 1;
+            idx += 2;
+            tmpEnc[idx] = todoTaskQueue[i];
+            tmpEnc[idx + 1] = 1;
         }
+        // printf("char: %c; count: %d\n", tmpEnc[idx], tmpEnc[idx + 1]);
     }
     // printf("size of struct: %zu\n", sizeof(data));
     data *doneChunk = malloc(sizeof(data));
-    doneChunk->chars = tmpChars;
-    doneChunk->counts = tmpCounts;
-    doneChunk->size = idx + 1;
+    doneChunk->encs = tmpEnc;
+    doneChunk->size = idx + 2;
     pthread_mutex_lock(&doneTaskMutex);
     doneTaskQueueSize++;
     // printf("Encoding chunk from %zu to %zu\n", chunkHead, chunkHead + chunkSize);
@@ -253,9 +252,9 @@ void encode(size_t chunkHead, size_t chunkSize)
 
 void handle_error(char *err_msg)
 {
-    UNUSED(err_msg);
-    // fprintf(stderr, "%s", err_msg);
-    // fflush(stdout);
+    // UNUSED(err_msg);
+    fprintf(stderr, "%s", err_msg);
+    fflush(stdout);
     freeMem();
     exit(0);
 }
