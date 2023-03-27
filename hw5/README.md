@@ -34,7 +34,11 @@ pthread_create(&tid[i],NULL,run,&args[i]);
 
 ### (1) What’s wrong? (Give a problematic interleaving.)
 
+Say thread 1 and thread 2 are both executing `transfer_bob_to_alice()` and Bob only has `trans+1` amount of moeny. Let's have thread 1 execute first. When thread 1 finishes executing the if clause and determines Bob has enough money, the scheduler switch to thread 2. Thread 2 will execute the if clause and also determines Bob has enough money. This will result in transferring `2*trans` amount of money from Bob's account. This is a problem because Bob only has `trans+1` amount of money.
+
 ### (2) State the fix in one sentence
+
+Include the if clause into the critical section as well.
 
 ## q4
 
