@@ -1,4 +1,4 @@
-void get_name(unsigned char *dirName, char *fileName, char *fileExt);
+void get_name(unsigned char *dirName, char *fileName);
 void add_null_term(char *chars, int size);
 
 void handle_error(char *err_msg)
@@ -17,23 +17,43 @@ void print_usage()
     exit(1);
 }
 
-void get_name(unsigned char *dirName, char *fileName, char *fileExt)
+void get_name(unsigned char *dirName, char *fileName)
 {
-    memcpy(fileName, dirName, 8);
-    memcpy(fileExt, dirName + 8, 3);
-    add_null_term(fileName, 8);
-    add_null_term(fileExt, 3);
+    int idx = 0;
+    while (dirName[idx] != ' ' && idx < 8)
+    {
+        fileName[idx] = dirName[idx];
+        idx++;
+    }
+    int dirIdx = idx;
+    while (dirName[dirIdx] == ' ' && dirIdx < 11)
+        dirIdx++;
+    if (dirIdx < 11)
+    {
+        fileName[idx] = '.';
+        idx++;
+    }
+    while (dirIdx < 11 && dirName[dirIdx] != ' ')
+    {
+        fileName[idx] = dirName[dirIdx];
+        idx++;
+        dirIdx++;
+    }
+    fileName[idx] = '\0';
 }
 
-void add_null_term(char *chars, int size)
+int match_del_filename(char *delFileName, char *targFileName)
 {
-    for (int i = 0; i < size; i++)
+    short idx = 1;
+    while (delFileName[idx] != '\0' && targFileName[idx] != '\0')
     {
-        if (chars[i] == ' ')
-        {
-            chars[i] = '\0';
-            return;
-        }
+        if (delFileName[idx] != targFileName[idx])
+            return 0;
+        idx++;
     }
-    chars[size] = '\0';
+    if (delFileName[idx] == '\0' && targFileName[idx] == '\0')
+    {
+        return 1;
+    }
+    return 0;
 }

@@ -12,21 +12,23 @@ void read_disk(char *disk);
 void init_all_areas(unsigned char *addr);
 void list_fs_info();
 void list_dir_entries(int clusterNum);
-short trav_entries(DirEntry *dir, int opt, char *recoverFileName);
-
-short list_entries(DirEntry *dir);
+short trav_entries(DirEntry *dir);
+short trav_dir(DirEntry *dir, int clusNum);
 DirEntry *get_dir_entry(int clusNum);
 DirEntry *get_next_dir(DirEntry *dir);
 int get_next_clus(int clusNum);
-void recover_small_file(char *optarg);
-int recover_file(DirEntry *dir, char *recoverFileName);
+void recover_file(char *fileName);
+short trav_dir_recover(DirEntry *dir, int clusNum, char *recoverFileName, DirEntry *cands[]);
+int find_del_file_cand(DirEntry *dir, char *recoverFileName, DirEntry *cands[], short candNum);
 int match_del_filename(char *delFileName, char *targFileName);
+void recover(DirEntry *dirs[], char *fileName);
 
 BootEntry *bootEntry;
 unsigned char *diskAddr;
 int endOfRsvd;
 int endOfFAT;
 int entriesPerClus;
+int clusSize;
 unsigned char *dataArea;
 int *FAT;
 /*
@@ -71,7 +73,7 @@ int main(int argc, char **argv)
             {
                 select = 1;
                 selectR = 1;
-                recover_small_file(optarg);
+                recover_file(optarg);
             }
             break;
         case 'R':
@@ -111,6 +113,7 @@ void read_disk(char *disk)
     endOfFAT = endOfRsvd + bootEntry->BPB_FATSz32 * bootEntry->BPB_NumFATs * bootEntry->BPB_BytsPerSec;
     dataArea = addr + endOfFAT;
     entriesPerClus = bootEntry->BPB_BytsPerSec * bootEntry->BPB_SecPerClus / sizeof(DirEntry);
+    clusSize = bootEntry->BPB_BytsPerSec * bootEntry->BPB_SecPerClus;
     FAT = (int *)(addr + endOfRsvd);
 }
 
@@ -126,74 +129,55 @@ DirEntry *get_dir_entry(int clusNum)
 {
     return (DirEntry *)(dataArea + (clusNum - 2) * bootEntry->BPB_SecPerClus * bootEntry->BPB_BytsPerSec);
 }
-short trav_entries(DirEntry *dir, int opt, char *recoverFileName)
+short trav_entries(DirEntry *dir)
 {
-    /*
-    opt=0: list all entries
-    opt=1: recover entries. return -1 if succeed, else return normal count
-    */
     short count = 0;
     while (dir->DIR_Name[0] != 0x00 && entriesPerClus > count)
     {
-        if (opt == 0)
-            count += list_entries(dir);
-        else if (opt == 1)
+        char fileName[14];
+        if (dir->DIR_Name[0] == 0xE5)
         {
-            if (recover_file(dir, recoverFileName) == 1)
-                return -1;
+            dir++;
+            continue;
         }
+        get_name(dir->DIR_Name, fileName);
+        if (dir->DIR_Attr == 0x10)
+            printf("%s/ (starting cluster = %d)\n", fileName, dir->DIR_FstClusLO);
+        else
+        {
+            printf("%s (size = %d", fileName, dir->DIR_FileSize);
+            if (dir->DIR_FileSize == 0)
+                printf(")\n");
+            else
+                printf(", starting cluster = %d)\n", dir->DIR_FstClusLO);
+        }
+        count++;
         dir++;
     }
     return count;
 }
 
-short list_entries(DirEntry *dir)
-{
-    char fileName[9];
-    char fileExt[4];
-    if (dir->DIR_Name[0] == 0xE5)
-        return 0;
-    get_name(dir->DIR_Name, fileName, fileExt);
-    if (dir->DIR_Attr == 0x10)
-        printf("%s/ (starting cluster = %d)\n", fileName, dir->DIR_FstClusLO);
-    else
-    {
-        if (strcmp(fileExt, "\0") == 0)
-            printf("%s (size = %d", fileName, dir->DIR_FileSize);
-        else
-            printf("%s.%s (size = %d", fileName, fileExt, dir->DIR_FileSize);
-
-        if (dir->DIR_FileSize == 0)
-            printf(")\n");
-        else
-            printf(", starting cluster = %d)\n", dir->DIR_FstClusLO);
-    }
-    return 1;
-}
-short trav_dir(DirEntry *dir, int clusNum, int opt, char *recoverFileName)
+short trav_dir(DirEntry *dir, int clusNum)
 {
     short entriesCount = 0;
     while (dir)
     {
-        if (opt == 0)
-            entriesCount += trav_entries(dir, opt, recoverFileName);
-        else if (opt == 1)
-        {
-            if (trav_entries(dir, opt, recoverFileName) == -1)
-                return -1;
-        }
-        if ((clusNum = get_next_clus(clusNum)) == -1)
+        entriesCount += trav_entries(dir);
+        clusNum = get_next_clus(clusNum);
+        if (clusNum == -1)
             break;
         dir = get_dir_entry(clusNum);
     }
     return entriesCount;
 }
+
 void list_dir_entries(int clusNum)
 {
     DirEntry *rootDir = get_dir_entry(clusNum);
-    short entriesCount = trav_dir(rootDir, clusNum, 0, NULL);
+    short entriesCount = trav_dir(rootDir, clusNum);
     printf("Total number of entries = %d\n", entriesCount);
 }
+
 int get_next_clus(int clusNum)
 {
     if (FAT[clusNum] >= 0x0ffffff8)
@@ -201,49 +185,68 @@ int get_next_clus(int clusNum)
     return FAT[clusNum];
 }
 
-void recover_small_file(char *fileName)
+void recover_file(char *fileName)
 {
     int clusNum = (int)bootEntry->BPB_RootClus;
     DirEntry *rootDir = get_dir_entry(clusNum);
-    if (trav_dir(rootDir, clusNum, 1, fileName) == -1)
+    DirEntry *cands[100];
+    short candNum = trav_dir_recover(rootDir, clusNum, fileName, cands);
+    if (candNum == 1)
+    {
+        recover(cands, fileName);
         printf("%s: successfully recovered\n", fileName);
-    else
+    }
+    else if (candNum == 0)
         printf("%s: file not found\n", fileName);
+    else
+    {
+        printf("%s: multiple candidates found\n", fileName);
+    }
 }
 
-int recover_file(DirEntry *dir, char *recoverFileName)
+short trav_dir_recover(DirEntry *dir, int clusNum, char *recoverFileName, DirEntry *cands[])
 {
-    char delFileName[9];
-    char delFileExt[4];
-    char fullName[14];
-    get_name(dir->DIR_Name, delFileName, delFileExt);
-    strcpy(fullName, delFileName);
-    if (strcmp(delFileExt, "\0") != 0)
+    short candNum = 0;
+    while (dir)
     {
-        strcat(fullName, ".");
-        strcat(fullName, delFileExt);
+        candNum = find_del_file_cand(dir, recoverFileName, cands, candNum);
+        if ((clusNum = get_next_clus(clusNum)) == -1)
+            break;
+        dir = get_dir_entry(clusNum);
     }
-    if ((fullName[0] == 0xE5) && match_del_filename(fullName, recoverFileName))
-    {
-        int clusNum = dir->DIR_FstClusHI << 16 | dir->DIR_FstClusLO;
-        dir->DIR_Name[0] = recoverFileName[0];
-        FAT[clusNum] = 0x0ffffff8;
-        return 1;
-    }
-    return 0;
+    return candNum;
 }
-int match_del_filename(char *delFileName, char *targFileName)
+
+int find_del_file_cand(DirEntry *dir, char *recoverFileName, DirEntry *cands[], short candNum)
 {
-    short idx = 1;
-    while (delFileName[idx] != '\0' && targFileName[idx] != '\0')
+    char delFileName[13];
+    short count = 0;
+    while (dir->DIR_Name[0] != 0x00 && entriesPerClus > count)
     {
-        if (delFileName[idx] != targFileName[idx])
-            return 0;
-        idx++;
+        get_name(dir->DIR_Name, delFileName);
+        if ((delFileName[0] == 0xE5) && match_del_filename(delFileName, recoverFileName))
+        {
+            cands[candNum] = dir;
+            candNum++;
+        }
+        count++;
+        dir++;
     }
-    if (delFileName[idx] == '\0' && targFileName[idx] == '\0')
+    return candNum;
+}
+
+void recover(DirEntry *dirs[], char *fileName)
+{
+    DirEntry *dir = dirs[0];
+    dir->DIR_Name[0] = fileName[0];
+    int clusCount = dir->DIR_FileSize / clusSize;
+    if (dir->DIR_FileSize % clusSize != 0)
+        clusCount++;
+    int clusNum = dir->DIR_FstClusHI << 16 | dir->DIR_FstClusLO;
+    for (int i = 0; i < clusCount - 1; i++)
     {
-        return 1;
+        FAT[clusNum] = clusNum + 1;
+        clusNum++;
     }
-    return 0;
+    FAT[clusNum] = 0x0ffffff8;
 }
